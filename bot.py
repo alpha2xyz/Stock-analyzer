@@ -208,8 +208,9 @@ def get_quote(api_key, symbol):
 
 def format_quote(symbol, quote):
     """يحوّل رد Finnhub لرسالة عربية مرتبة."""
-    change = quote.get("d") or 0
-    change_percent = quote.get("dp") or 0
+    # فينهب يرجّع النسبة بأربع خانات عشرية (-2.1702) — نقصّرها لخانتين
+    change = round(quote.get("d") or 0, 2)
+    change_percent = round(quote.get("dp") or 0, 2)
     arrow = "🟢" if change >= 0 else "🔴"
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
