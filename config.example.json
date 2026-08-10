@@ -1,5 +1,6 @@
 {
   "telegram_bot_token": "",
   "telegram_chat_id": "",
-  "finnhub_api_key": ""
+  "finnhub_api_key": "",
+  "twelvedata_api_key": ""
 }

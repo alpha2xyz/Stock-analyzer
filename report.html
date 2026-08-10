@@ -350,7 +350,7 @@
     </p>
     <div class="stamp">
       <span class="pill pill--ok">المرحلة ٢ خلصت</span>
-      <span class="pill pill--warn">المرحلة ٣ تنتظر مفتاح واحد</span>
+      <span class="pill pill--warn">المرحلة ٣ جاهزة تبدأ</span>
       <span class="pill pill--quiet">شغّال على الجوال</span>
     </div>
   </header>
@@ -391,9 +391,9 @@
         <div class="stage-n">٣</div>
         <div class="stage-body">
           <div class="stage-title">الفلترة على قائمة ٥٠–١٠٠ سهم</div>
-          <div class="stage-note">كل البيانات المطلوبة صارت متوفرة — تنتظر مفتاح Twelve Data المجاني</div>
+          <div class="stage-note">كل البيانات المطلوبة متوفرة ومفاتيحها جاهزة على الجوال</div>
         </div>
-        <span class="pill pill--warn">تنتظر مفتاح</span>
+        <span class="pill pill--warn">التالية</span>
       </div>
 
       <div class="stage stage--todo">
@@ -521,74 +521,124 @@
     </p>
 
     <h3>اللي نجح: Twelve Data</h3>
+    <p>
+      اختُبر بمفتاح باقة مجانية <strong>حقيقية</strong>، مو بمفتاح تجريبي:
+    </p>
     <div class="table-wrap">
       <table>
         <thead>
-          <tr><th>اللي كان ناقص</th><th>الحل عندهم</th><th>الحالة</th></tr>
+          <tr><th>النقطة</th><th>تعطي</th><th>الحالة</th></tr>
         </thead>
         <tbody>
           <tr>
-            <td>شموع تاريخية + حجم اليوم</td>
-            <td><code>time_series</code></td>
+            <td><code>quote</code></td>
+            <td>السعر + حجم اليوم + متوسط الحجم &mdash; في طلب واحد</td>
             <td class="verdict verdict--ok">متاح</td>
           </tr>
           <tr>
-            <td>VWAP (يومي وداخل اليوم)</td>
             <td><code>vwap</code></td>
+            <td>يومي وداخل اليوم</td>
             <td class="verdict verdict--ok">متاح</td>
           </tr>
           <tr>
-            <td>ATR</td>
-            <td><code>atr</code> &mdash; محسوب جاهز</td>
+            <td><code>atr</code></td>
+            <td>محسوب جاهز، ما نحسبه على الجوال</td>
             <td class="verdict verdict--ok">متاح</td>
           </tr>
           <tr>
-            <td>القيمة السوقية والفلوت</td>
             <td><code>statistics</code></td>
-            <td class="verdict verdict--ok">متاح</td>
+            <td>القيمة السوقية والفلوت</td>
+            <td class="verdict verdict--stop">محجوب &mdash; 403</td>
           </tr>
         </tbody>
       </table>
     </div>
 
-    <h3>ليش نستخدم المصدرين مع بعض</h3>
+    <div class="callout">
+      <h3>الدرس اللي تكرر مرتين في يوم واحد</h3>
+      <p>
+        مفتاح <span class="mono">demo</span> التجريبي كان يفتح
+        <span class="mono">statistics</span> عادي &mdash; والمفتاح المجاني
+        الحقيقي رفضه بـ <span class="mono">403</span>.
+        <strong>لا تثق بمفتاح تجريبي ولا بصفحة أسعار — اختبر بالمفتاح اللي
+        بيشتغل به البوت فعلاً.</strong> لو انبنت المرحلة ٣ على نتيجة المفتاح
+        التجريبي، كانت بتنهار عند أول تشغيل حقيقي.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>التغطية النهائية — كل شرط ومصدره</h2>
+    <p>
+      <strong>ما في مصدر واحد يكفي.</strong> كل واحد يغطي بالضبط اللي الثاني
+      يحجبه: الشموع التاريخية محجوبة عند Finnhub، والقيمة السوقية محجوبة عند
+      Twelve Data. المحصلة إن <strong>الشروط الأربعة كلها + ATR مغطّاة</strong>.
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>المطلوب</th><th>Finnhub</th><th>Twelve&nbsp;Data</th><th>المصدر المعتمد</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>١ &mdash; القيمة السوقية ٤٠–٦٠ مليون</td>
+            <td class="verdict verdict--ok">✓</td>
+            <td class="verdict verdict--stop">✕</td>
+            <td>Finnhub</td>
+          </tr>
+          <tr>
+            <td>٢ &mdash; الفلوت فوق ٥٠٠٬٠٠٠</td>
+            <td class="verdict verdict--ok">✓</td>
+            <td class="verdict verdict--stop">✕</td>
+            <td>Finnhub</td>
+          </tr>
+          <tr>
+            <td>٣ &mdash; قفزة في حجم التداول</td>
+            <td class="verdict verdict--stop">✕</td>
+            <td class="verdict verdict--ok">✓</td>
+            <td>Twelve Data</td>
+          </tr>
+          <tr>
+            <td>٤ &mdash; السعر فوق VWAP</td>
+            <td class="verdict verdict--stop">✕</td>
+            <td class="verdict verdict--ok">✓</td>
+            <td>Twelve Data</td>
+          </tr>
+          <tr>
+            <td>وقف الخسارة بـ ATR</td>
+            <td class="verdict verdict--stop">✕</td>
+            <td class="verdict verdict--ok">✓</td>
+            <td>Twelve Data</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
     <div class="flow">
       <div class="node">
-        <div class="node-role">WIDE NET</div>
+        <div class="node-role">BUILD THE LIST</div>
         <div class="node-name">Finnhub &mdash; ٦٠/دقيقة</div>
         <div class="node-desc">
-          يمشي على قائمة طويلة بسرعة: القيمة السوقية والفلوت. أسرع بـ ٧٫٥ مرة.
+          يبني القائمة بالقيمة السوقية والفلوت. مرة في اليوم تكفي — هذي
+          بيانات ما تتغير كل ساعة.
         </div>
       </div>
       <div class="node">
-        <div class="node-role">DEEP DATA</div>
+        <div class="node-role">SCAN THE LIST</div>
         <div class="node-name">Twelve Data &mdash; ٨/دقيقة</div>
         <div class="node-desc">
-          الحجم و VWAP و ATR للأسهم القليلة اللي نجت من الفلتر الأول.
+          يفحص الناجين: الحجم و VWAP، و ATR وقت التنبيه. رصيدين لكل سهم.
         </div>
       </div>
     </div>
-    <p>
-      <strong>الشي اللي يخلي المجاني يكفي:</strong> شرط القيمة السوقية
-      (٤٠–٦٠ مليون) ضيّق جداً، فالناجين منه قليلين. لو نجى ٢٠ سهم، فحصهم
-      يكلف ٤٠ رصيد للفحصة = <strong>حوالي ٢٠ فحصة في اليوم</strong>، يعني كل
-      ٢٠ دقيقة تقريباً خلال ساعات السوق.
-    </p>
 
-    <div class="callout">
-      <h3>الخطوة الوحيدة الباقية قبل المرحلة ٣</h3>
-      <p>
-        <strong>مفتاح مجاني حقيقي من twelvedata.com.</strong> كل الاختبارات
-        فوق انعملت بمفتاح <span class="mono">demo</span> التجريبي، مو بباقة
-        مجانية حقيقية — ونفس فخّ Finnhub وارد: النقطة موجودة بس محجوبة عن
-        الباقة المجانية.
-      </p>
-      <ul class="choices">
-        <li>تسجيل مجاني بدون بطاقة</li>
-        <li>إعادة اختبار النقاط الأربع على المفتاح الحقيقي</li>
-        <li>بعدها المرحلة ٣ تبدأ مباشرة</li>
-      </ul>
-    </div>
+    <p>
+      <strong>الميزانية:</strong> الأرصدة تُحسب لكل رمز مو لكل طلب — مقروءة
+      من ترويسة الرد نفسها. لو نجى ٢٠ سهم من الفلتر الأول، فحصهم يكلف ٤٠
+      رصيد = <strong>حوالي ٢٠ فحصة في اليوم</strong>، يعني كل ٢٠ دقيقة خلال
+      ساعات السوق. <strong>شرط القيمة السوقية الضيّق هو اللي يخلي المجاني
+      يكفي.</strong>
+    </p>
   </section>
 
   <section>
@@ -626,10 +676,10 @@
   <section>
     <h2>الخطوة الجاية</h2>
     <p>
-      مفتاح Twelve Data المجاني، ثم إعادة اختبار النقاط الأربع عليه، ثم
-      المرحلة ٣ مباشرة — قائمة الأسهم والفلترة.
-      <strong>ما عاد في شي محجوب في المواصفات</strong>: الشروط الأربعة كلها
-      لها مصدر بيانات، ووقف الخسارة بـ ATR كذلك.
+      المرحلة ٣ مباشرة — بناء القائمة من Finnhub، والفلترة من Twelve Data.
+      <strong>ما عاد في شي محجوب في المواصفات:</strong> الشروط الأربعة كلها
+      لها مصدر بيانات مجرَّب، ووقف الخسارة بـ ATR كذلك، والمفاتيح الثلاثة
+      محفوظة على الجوال.
     </p>
   </section>
 
