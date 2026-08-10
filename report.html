@@ -350,7 +350,7 @@
     </p>
     <div class="stamp">
       <span class="pill pill--ok">المرحلة ٢ خلصت</span>
-      <span class="pill pill--warn">المرحلة ٣ موقوفة على قرار</span>
+      <span class="pill pill--warn">المرحلة ٣ تنتظر مفتاح واحد</span>
       <span class="pill pill--quiet">شغّال على الجوال</span>
     </div>
   </header>
@@ -391,16 +391,16 @@
         <div class="stage-n">٣</div>
         <div class="stage-body">
           <div class="stage-title">الفلترة على قائمة ٥٠–١٠٠ سهم</div>
-          <div class="stage-note">جاهزة تبدأ — بس محتاجة قرار في حدود الباقة المجانية أولاً</div>
+          <div class="stage-note">كل البيانات المطلوبة صارت متوفرة — تنتظر مفتاح Twelve Data المجاني</div>
         </div>
-        <span class="pill pill--warn">موقوفة على قرار</span>
+        <span class="pill pill--warn">تنتظر مفتاح</span>
       </div>
 
       <div class="stage stage--todo">
         <div class="stage-n">٤</div>
         <div class="stage-body">
           <div class="stage-title">حساب ATR ووقف الخسارة</div>
-          <div class="stage-note">يحتاج بيانات تاريخية — غير متاحة مجاناً</div>
+          <div class="stage-note">انحلّت — Twelve Data يرجّع ATR محسوب جاهز</div>
         </div>
         <span class="pill pill--quiet">لاحقاً</span>
       </div>
@@ -431,11 +431,11 @@
   </section>
 
   <section>
-    <h2>حدود الباقة المجانية — أهم شي في التقرير</h2>
+    <h2>Finnhub — وش يعطي مجاناً ووش يحجب</h2>
     <p>
-      اختُبرت نقاط Finnhub وحدة وحدة بالمفتاح الحقيقي بتاريخ ٢٠٢٦-٠٨-١٠.
-      <strong>النتيجة تغيّر خطة المرحلتين ٣ و ٤</strong>، وعشان كذا الفحص
-      انعمل قبل ما ينبني أي شي عليها.
+      اختُبرت نقاط Finnhub وحدة وحدة بالمفتاح الحقيقي بتاريخ ٢٠٢٦-٠٨-١٠،
+      بدل الاعتماد على كلام الموقع. <strong>الفحص انعمل قبل ما ينبني أي شي
+      عليها</strong> — وطلع إن جزء أساسي محجوب.
     </p>
 
     <div class="table-wrap">
@@ -488,56 +488,105 @@
       <strong>٣–٤ دقائق للفحصة الوحدة</strong>.
     </p>
 
-    <h3>وش يعني هذا لشروط الفلترة الأربعة</h3>
+  </section>
+
+  <section>
+    <h2>الحل: مصدر ثاني مجاني</h2>
+    <p>
+      بدل ما نعدّل شروط الفلترة عشان تناسب المتاح، انبحث عن مصدر مجاني يغطي
+      الناقص. <strong>الشروط الأربعة تبقى كما هي.</strong>
+    </p>
+
+    <h3>اللي انجرّب وانرفض</h3>
     <div class="table-wrap">
       <table>
         <thead>
-          <tr>
-            <th>الشرط</th>
-            <th>الحالة</th>
-            <th>السبب</th>
-          </tr>
+          <tr><th>المصدر</th><th>وش صار</th></tr>
         </thead>
         <tbody>
           <tr>
-            <td>١ &mdash; القيمة السوقية بين ٤٠ و ٦٠ مليون</td>
-            <td class="verdict verdict--ok">جاهز</td>
-            <td>البيانات متاحة</td>
+            <td>Yahoo Finance (غير رسمي)</td>
+            <td class="verdict verdict--stop">429 &mdash; رفض الطلب مباشرة</td>
           </tr>
           <tr>
-            <td>٢ &mdash; الفلوت فوق ٥٠٠٬٠٠٠ سهم</td>
-            <td class="verdict verdict--ok">جاهز</td>
-            <td>البيانات متاحة</td>
+            <td>Stooq</td>
+            <td class="verdict verdict--stop">تحقق JavaScript ضد البوتات</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      الاثنين مصادر غير رسمية فيها حماية ضد البوتات. <strong>ما تصلح أساس
+      لبوت يشتغل لحاله على جوال</strong> — تنكسر بدون إنذار وما في أحد يشتكي له.
+    </p>
+
+    <h3>اللي نجح: Twelve Data</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>اللي كان ناقص</th><th>الحل عندهم</th><th>الحالة</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>شموع تاريخية + حجم اليوم</td>
+            <td><code>time_series</code></td>
+            <td class="verdict verdict--ok">متاح</td>
           </tr>
           <tr>
-            <td>٣ &mdash; قفزة في حجم التداول</td>
-            <td class="verdict verdict--warn">ناقص</td>
-            <td>عندنا المتوسط، ما عندنا حجم اليوم</td>
+            <td>VWAP (يومي وداخل اليوم)</td>
+            <td><code>vwap</code></td>
+            <td class="verdict verdict--ok">متاح</td>
           </tr>
           <tr>
-            <td>٤ &mdash; السعر فوق VWAP</td>
-            <td class="verdict verdict--stop">مو ممكن</td>
-            <td>يحتاج بيانات داخل اليوم</td>
+            <td>ATR</td>
+            <td><code>atr</code> &mdash; محسوب جاهز</td>
+            <td class="verdict verdict--ok">متاح</td>
           </tr>
           <tr>
-            <td>وقف الخسارة بـ ATR (المرحلة ٤)</td>
-            <td class="verdict verdict--stop">مو ممكن</td>
-            <td>يحتاج شموع تاريخية</td>
+            <td>القيمة السوقية والفلوت</td>
+            <td><code>statistics</code></td>
+            <td class="verdict verdict--ok">متاح</td>
           </tr>
         </tbody>
       </table>
     </div>
 
+    <h3>ليش نستخدم المصدرين مع بعض</h3>
+    <div class="flow">
+      <div class="node">
+        <div class="node-role">WIDE NET</div>
+        <div class="node-name">Finnhub &mdash; ٦٠/دقيقة</div>
+        <div class="node-desc">
+          يمشي على قائمة طويلة بسرعة: القيمة السوقية والفلوت. أسرع بـ ٧٫٥ مرة.
+        </div>
+      </div>
+      <div class="node">
+        <div class="node-role">DEEP DATA</div>
+        <div class="node-name">Twelve Data &mdash; ٨/دقيقة</div>
+        <div class="node-desc">
+          الحجم و VWAP و ATR للأسهم القليلة اللي نجت من الفلتر الأول.
+        </div>
+      </div>
+    </div>
+    <p>
+      <strong>الشي اللي يخلي المجاني يكفي:</strong> شرط القيمة السوقية
+      (٤٠–٦٠ مليون) ضيّق جداً، فالناجين منه قليلين. لو نجى ٢٠ سهم، فحصهم
+      يكلف ٤٠ رصيد للفحصة = <strong>حوالي ٢٠ فحصة في اليوم</strong>، يعني كل
+      ٢٠ دقيقة تقريباً خلال ساعات السوق.
+    </p>
+
     <div class="callout">
-      <h3>القرار المطلوب قبل المرحلة ٣</h3>
+      <h3>الخطوة الوحيدة الباقية قبل المرحلة ٣</h3>
       <p>
-        شرطين من أربعة جاهزين، وواحد ناقص، وواحد مو ممكن. ما ينبني شي على هذا
-        الجزء قبل الاختيار بين:
+        <strong>مفتاح مجاني حقيقي من twelvedata.com.</strong> كل الاختبارات
+        فوق انعملت بمفتاح <span class="mono">demo</span> التجريبي، مو بباقة
+        مجانية حقيقية — ونفس فخّ Finnhub وارد: النقطة موجودة بس محجوبة عن
+        الباقة المجانية.
       </p>
       <ul class="choices">
-        <li>نعدّل الشروط بحيث تشتغل على المتاح مجاناً</li>
-        <li>نضيف مصدر بيانات ثاني مجاني يغطي الناقص</li>
-        <li>نشترك بباقة مدفوعة في Finnhub</li>
+        <li>تسجيل مجاني بدون بطاقة</li>
+        <li>إعادة اختبار النقاط الأربع على المفتاح الحقيقي</li>
+        <li>بعدها المرحلة ٣ تبدأ مباشرة</li>
       </ul>
     </div>
   </section>
@@ -577,8 +626,10 @@
   <section>
     <h2>الخطوة الجاية</h2>
     <p>
-      قرار حدود الباقة المجانية أولاً. بعده تبدأ المرحلة ٣ مباشرة — قائمة
-      الأسهم والفلترة، وكل البيانات المطلوبة لها متاحة عدا اللي انذكر فوق.
+      مفتاح Twelve Data المجاني، ثم إعادة اختبار النقاط الأربع عليه، ثم
+      المرحلة ٣ مباشرة — قائمة الأسهم والفلترة.
+      <strong>ما عاد في شي محجوب في المواصفات</strong>: الشروط الأربعة كلها
+      لها مصدر بيانات، ووقف الخسارة بـ ATR كذلك.
     </p>
   </section>
 
