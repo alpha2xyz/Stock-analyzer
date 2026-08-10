@@ -444,8 +444,10 @@ def scan_watchlist(config):
         if data.get("code"):
             return None, f"Twelve Data: {data.get('message', 'خطأ غير معروف')}"
 
-        # طلب برمز واحد يرجّع الكائن مباشرة، وبعدة رموز يرجّع قاموس
-        quotes = data if len(batch) > 1 else {batch[0]: data}
+        # تيلف داتا يرجّع شكلين مختلفين: طلب برمز واحد يرجّع الكائن مباشرة،
+        # وبعدة رموز يرجّع قاموس مفاتيحه الرموز. نتعرّف على الشكل من محتواه
+        # مو من عدد الرموز اللي طلبناها — أمتن لو رجع رمز ناقص.
+        quotes = {data["symbol"]: data} if "symbol" in data else data
 
         for symbol, quote in quotes.items():
             if not isinstance(quote, dict) or quote.get("code"):

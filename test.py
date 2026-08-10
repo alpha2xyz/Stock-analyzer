@@ -72,6 +72,67 @@ FILTER_CASES = [
 ]
 
 
+def fake_api(quotes, vwaps):
+    """يبدّل نداءات Twelve Data ببيانات محضّرة، عشان نختبر منطق الفلترة
+    نفسه بدون إنترنت وبدون ما نصرف أرصدة."""
+
+    def handler(api_key, endpoint, params):
+        if endpoint == "quote":
+            wanted = params["symbol"].split(",")
+            matched = {s: dict(quotes[s], symbol=s) for s in wanted if s in quotes}
+            # نقلّد شكل الرد الحقيقي: رمز واحد يرجع مباشرة، وأكثر يرجع قاموس
+            if len(matched) == 1:
+                return next(iter(matched.values()))
+            return matched
+        if endpoint == "vwap":
+            return {"values": [{"vwap": str(vwaps[params["symbol"]])}]}
+        return None
+
+    return handler
+
+
+def scan_cases():
+    """يرجّع (الوصف، الرموز المتوقع تنبيهها) لكل حالة."""
+    return [
+        (
+            "قفزة حجم + فوق VWAP → تنبيه",
+            {"AAA": {"close": "10.5", "volume": "3000000", "average_volume": "1000000"}},
+            {"AAA": 10.0},
+            ["AAA"],
+        ),
+        (
+            "قفزة حجم بس تحت VWAP → ما ينبّه",
+            {"BBB": {"close": "9.5", "volume": "3000000", "average_volume": "1000000"}},
+            {"BBB": 10.0},
+            [],
+        ),
+        (
+            "فوق VWAP بس بدون قفزة حجم → ما ينبّه",
+            {"CCC": {"close": "10.5", "volume": "1100000", "average_volume": "1000000"}},
+            {"CCC": 10.0},
+            [],
+        ),
+        (
+            "الحجم بالضبط ضعف المعدل → ينبّه (الشرط >=)",
+            {"DDD": {"close": "10.5", "volume": "2000000", "average_volume": "1000000"}},
+            {"DDD": 10.0},
+            ["DDD"],
+        ),
+        (
+            "معدل حجم صفر → يتجاهله بدل ما ينهار بقسمة على صفر",
+            {"EEE": {"close": "10.5", "volume": "3000000", "average_volume": "0"}},
+            {"EEE": 10.0},
+            [],
+        ),
+        (
+            "بيانات ناقصة → يتجاهله بدون انهيار",
+            {"FFF": {"close": None, "volume": None, "average_volume": None}},
+            {"FFF": 10.0},
+            [],
+        ),
+    ]
+
+
 def main():
     failures = 0
 
@@ -100,10 +161,31 @@ def main():
         print(f"{status} فلتر الحجم: {note:45s} -> {got}")
 
     print()
+    cases = scan_cases()
+    original_request = bot.twelvedata_request
+    original_sleep = bot.time.sleep
+    bot.time.sleep = lambda seconds: None  # ما ننتظر حدود المعدل في الاختبار
+    try:
+        for note, quotes, vwaps, expected in cases:
+            bot.twelvedata_request = fake_api(quotes, vwaps)
+            bot.save_watchlist([{"symbol": s} for s in quotes])
+            alerts, error = bot.scan_watchlist({"twelvedata_api_key": "x"})
+            got = sorted(a["symbol"] for a in (alerts or []))
+            ok = error is None and got == sorted(expected)
+            failures += not ok
+            status = "نجح  " if ok else "فشل  "
+            print(f"{status} الفحص: {note:50s} -> {got}")
+    finally:
+        bot.twelvedata_request = original_request
+        bot.time.sleep = original_sleep
+        if os.path.exists(bot.WATCHLIST_PATH):
+            os.remove(bot.WATCHLIST_PATH)
+
+    print()
     if failures:
         print(f"❌ فشل {failures} اختبار")
         sys.exit(1)
-    print(f"✅ كل الاختبارات نجحت ({len(CASES) + len(SUNDAY_CASES) + len(FILTER_CASES)})")
+    print(f"✅ كل الاختبارات نجحت ({len(CASES) + len(SUNDAY_CASES) + len(FILTER_CASES) + len(cases)})")
 
 
 if __name__ == "__main__":
