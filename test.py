@@ -53,6 +53,25 @@ SUNDAY_CASES = [
 ]
 
 
+# فلتر الحجم (شرط 1 و 2).
+# الخطر هنا الوحدات: فينهب يرجّع القيمة السوقية والفلوت بالمليون. لو انحسبت
+# بالدولار الكامل، الفلتر ما بيطلّع ولا سهم أبداً وما راح نعرف ليش.
+# (بروفايل، النتيجة المتوقعة، الوصف)
+FILTER_CASES = [
+    ({"marketCapitalization": 45.0, "floatingShare": 0.6}, True, "45 مليون + فلوت 600 ألف"),
+    ({"marketCapitalization": 40.0, "floatingShare": 0.6}, True, "40 مليون بالضبط — الحد الأدنى"),
+    ({"marketCapitalization": 60.0, "floatingShare": 0.6}, True, "60 مليون بالضبط — الحد الأعلى"),
+    ({"marketCapitalization": 39.9, "floatingShare": 0.6}, False, "أقل من 40 مليون"),
+    ({"marketCapitalization": 60.1, "floatingShare": 0.6}, False, "أكثر من 60 مليون"),
+    ({"marketCapitalization": 45.0, "floatingShare": 0.4}, False, "فلوت 400 ألف — تحت الحد"),
+    ({"marketCapitalization": 45.0, "floatingShare": 0.5}, False, "فلوت 500 ألف بالضبط — لازم يكون فوقها"),
+    ({"marketCapitalization": 4572794.0, "floatingShare": 14445.7}, False, "آبل — عملاق، لازم يسقط"),
+    ({"marketCapitalization": None, "floatingShare": 0.6}, False, "قيمة سوقية ناقصة"),
+    ({"marketCapitalization": 45.0, "floatingShare": None}, False, "فلوت ناقص"),
+    ({}, False, "بروفايل فاضي"),
+]
+
+
 def main():
     failures = 0
 
@@ -73,10 +92,18 @@ def main():
         print(f"{status} الأحد رقم {n} في {month}/{year} = {day} (المتوقع {expected_day})")
 
     print()
+    for profile, expected, note in FILTER_CASES:
+        got = bot.passes_size_filter({}, profile)
+        ok = got == expected
+        failures += not ok
+        status = "نجح  " if ok else "فشل  "
+        print(f"{status} فلتر الحجم: {note:45s} -> {got}")
+
+    print()
     if failures:
         print(f"❌ فشل {failures} اختبار")
         sys.exit(1)
-    print(f"✅ كل الاختبارات نجحت ({len(CASES) + len(SUNDAY_CASES)})")
+    print(f"✅ كل الاختبارات نجحت ({len(CASES) + len(SUNDAY_CASES) + len(FILTER_CASES)})")
 
 
 if __name__ == "__main__":
