@@ -1,0 +1,38 @@
+#!/data/data/com.termux/files/usr/bin/bash
+#
+# حارس البوت.
+#
+# ليش موجود: هذا الجوال يقتل العمليات اللي تشتغل طويل بدون إنذار. لو مات
+# البوت وما في أحد يعيد تشغيله، يقعد ميت وأنت تنتظر تنبيهات ما بتجي أبداً.
+# الحارس يشوف إنه وقف، ويشغّله من جديد.
+#
+# ليش ملف منفصل عن bot.py: البرنامج ما يقدر يعيد تشغيل نفسه بعد ما ينقتل.
+# لازم شي بره يراقبه.
+#
+# التشغيل:
+#   ./run.sh                                        (يشتغل ويوقف مع الجلسة)
+#   setsid nohup ./run.sh >/dev/null 2>&1 &         (يضل شغّال بعد ما تسكّر SSH)
+#
+# الإيقاف:
+#   pkill -f run.sh && pkill -f "bot.py run"
+
+cd "$(dirname "$0")" || exit 1
+
+LOG="bot.log"
+RESTART_DELAY=10
+
+echo "[$(date '+%F %T')] الحارس اشتغل" >> "$LOG"
+
+while true; do
+    python bot.py run >> "$LOG" 2>&1
+    exit_code=$?
+
+    # خروج نظيف بالأمر (Ctrl+C) معناه إنك تبي توقفه فعلاً، فما نعيد تشغيله
+    if [ $exit_code -eq 0 ]; then
+        echo "[$(date '+%F %T')] البوت وقف بشكل طبيعي — الحارس بيوقف" >> "$LOG"
+        break
+    fi
+
+    echo "[$(date '+%F %T')] البوت وقف (كود $exit_code) — إعادة تشغيل بعد $RESTART_DELAY ثواني" >> "$LOG"
+    sleep "$RESTART_DELAY"
+done

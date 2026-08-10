@@ -1,3 +1,5 @@
 config.json
+state.json
+bot.log
 __pycache__/
 *.pyc
