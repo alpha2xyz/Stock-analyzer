@@ -350,8 +350,8 @@
     </p>
     <div class="stamp">
       <span class="pill pill--ok">المرحلة ٢ خلصت</span>
+      <span class="pill pill--ok">البوت شغّال ويستقبل أوامر</span>
       <span class="pill pill--warn">المرحلة ٣ جاهزة تبدأ</span>
-      <span class="pill pill--quiet">شغّال على الجوال</span>
     </div>
   </header>
 
@@ -418,15 +418,62 @@
   </section>
 
   <section>
-    <h2>الشي اللي يشتغل الحين</h2>
+    <h2>التخاطب مع البوت</h2>
     <p>
-      كل الكود في ملف واحد <span class="mono">bot.py</span>، و<strong>بدون أي
-      مكتبة خارجية</strong> — بايثون الأساسي بس، فما يحتاج أي تثبيت على الجوال.
+      البوت <strong>شغّال على الجوال الحين</strong> ويستقبل الأوامر. كل الكود
+      في ملف واحد <span class="mono">bot.py</span>، و<strong>بدون أي مكتبة
+      خارجية</strong> — بايثون الأساسي بس.
     </p>
+
     <div class="cmds">
-      <div class="cmd"><code>python bot.py</code><span>رسالة تجريبية على تيليجرام</span></div>
-      <div class="cmd"><code>python bot.py chatid</code><span>يطبع رقم المحادثة</span></div>
-      <div class="cmd"><code>python bot.py price AAPL</code><span>يجيب السعر ويرسله</span></div>
+      <div class="cmd"><code>/help</code><span>يعرض الأوامر</span></div>
+      <div class="cmd"><code>/status</code><span>البوت شغّال؟ السوق مفتوح؟</span></div>
+      <div class="cmd"><code>/price AAPL</code><span>سعر أي سهم أمريكي</span></div>
+      <div class="cmd"><code>/mute</code><span>يوقف التنبيهات — البوت يضل شغّال</span></div>
+      <div class="cmd"><code>/unmute</code><span>يرجّع التنبيهات</span></div>
+      <div class="cmd"><code>/list &nbsp;/refresh &nbsp;/scan</code><span>مع المرحلة ٣</span></div>
+    </div>
+
+    <h3>يسمع ٢٤ ساعة، ويفحص وقت السوق بس</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>الوظيفة</th><th>متى</th><th>ليش</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>يسمع أوامرك</td>
+            <td class="verdict verdict--ok">٢٤ ساعة</td>
+            <td>مجاني — ما يستهلك أي رصيد</td>
+          </tr>
+          <tr>
+            <td>يفحص الأسهم</td>
+            <td class="verdict verdict--warn">وقت السوق بس</td>
+            <td>هذا اللي يصرف الأرصدة</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      لو قفلنا السماع بعد السوق، ترسل <span class="mono">/status</span> الظهر
+      وما يرد أحد — وما تعرف هل هو نايم ولا ميت.
+      <strong>البوت الصامت والبوت الميت شكلهم واحد</strong>، وهذي بالضبط
+      المشكلة اللي <span class="mono">/status</span> موجود عشانها.
+    </p>
+
+    <h3>مشكلتان انكشفتا قبل ما تنفجران</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>المشكلة</th><th>الحل</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>الجوال ما عنده قاعدة المناطق الزمنية &mdash; حساب وقت السوق كان بينهار</td>
+            <td>حساب التوقيت الصيفي الأمريكي بأنفسنا، بدون تثبيت شي. ٢٠ اختبار يغطون حدود التحويل</td>
+          </tr>
+          <tr>
+            <td>الجوال يقتل العمليات الطويلة &mdash; البوت يموت وأنت تنتظر تنبيهات ما بتجي</td>
+            <td>حارس <span class="mono">run.sh</span> يعيد تشغيله. <strong>مُختبر بقتل حقيقي:</strong> مات، ورجع بعد ١٠ ثواني</td>
+          </tr>
+        </tbody>
+      </table>
     </div>
   </section>
 
