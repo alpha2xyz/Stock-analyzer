@@ -302,6 +302,7 @@ DEFAULTS = {
     "min_float_shares": 500_000,
     "volume_spike_ratio": 2.0,      # تجريبي — يتعدّل بعد ما نشوف نتائج حقيقية
     "scan_interval_minutes": 15,
+    "atr_multiplier": 1.75,         # مضاعف وقف الخسارة، يبدأ بين 1.5 و 2 حسب المواصفات
 }
 
 
@@ -468,7 +469,7 @@ def scan_watchlist(config):
             time.sleep(62)  # حد 8 أرصدة في الدقيقة
 
     # شرط 4: السعر فوق VWAP — للناجين بس
-    alerts = []
+    above_vwap = []
     for candidate in volume_passed:
         vwap_data = twelvedata_request(
             api_key, "vwap", {"symbol": candidate["symbol"], "interval": "5min", "outputsize": "1"}
@@ -489,26 +490,79 @@ def scan_watchlist(config):
 
         if candidate["price"] > vwap:
             candidate["vwap"] = vwap
+            above_vwap.append(candidate)
+
+    # وقف الخسارة بـ ATR — للأسهم اللي حققت الشروط الأربعة بس (نادرة جداً،
+    # عشان كذا رصيد إضافي لكل واحد منهم ما يكلّف شي محسوس)
+    alerts = []
+    for candidate in above_vwap:
+        stop = compute_stop_loss(config, api_key, candidate["symbol"], candidate["price"])
+        time.sleep(8)
+        if stop is not None:
+            candidate["stop_loss"] = stop["stop_loss"]
+            candidate["atr"] = stop["atr"]
+            alerts.append(candidate)
+        else:
+            # الشروط الأربعة تحققت لكن ATR فشل — التنبيه بدون وقف خسارة
+            # أفضل من ما يوصل أبداً؛ نرسله وننبّه إنه ناقص
+            candidate["stop_loss"] = None
+            candidate["atr"] = None
             alerts.append(candidate)
 
     return alerts, None
 
 
+def compute_stop_loss(config, api_key, symbol, entry_price):
+    """وقف الخسارة = سعر الدخول − (ATR × مضاعف). يرجّع None لو فشل الطلب."""
+    data = twelvedata_request(api_key, "atr", {"symbol": symbol, "interval": "1day", "time_period": "14", "outputsize": "1"})
+
+    if not data or data.get("code"):
+        return None
+
+    values = data.get("values") or []
+    if not values:
+        return None
+
+    try:
+        atr = float(values[0]["atr"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+    multiplier = setting(config, "atr_multiplier")
+    return {"atr": atr, "stop_loss": entry_price - (atr * multiplier)}
+
+
 def format_alert(candidate):
     ratio = candidate["volume"] / candidate["average_volume"]
-    return "\n".join(
-        [
-            f"🚨 تنبيه — {LTR}{candidate['symbol']}",
-            "",
-            f"السعر: {LTR}{round(candidate['price'], 2)}",
-            f"VWAP: {LTR}{round(candidate['vwap'], 2)}",
-            f"الحجم: {LTR}{int(candidate['volume']):,} سهم",
-            f"المعدل: {LTR}{int(candidate['average_volume']):,} سهم",
-            f"القفزة: {LTR}{round(ratio, 1)}× المعدل",
-            "",
-            "الشروط الأربعة تحققت.",
-        ]
-    )
+    symbol = candidate["symbol"]
+
+    lines = [
+        f"🚨 تنبيه — {LTR}{symbol}",
+        "",
+        f"سعر الدخول: {LTR}{round(candidate['price'], 2)}",
+    ]
+
+    if candidate.get("stop_loss") is not None:
+        lines.append(f"وقف الخسارة: {LTR}{round(candidate['stop_loss'], 2)}")
+        lines.append(f"(ATR {LTR}{round(candidate['atr'], 2)})")
+    else:
+        lines.append("⚠️ وقف الخسارة: ما قدرت أحسبه — راجع السهم يدوياً")
+
+    lines += [
+        "",
+        f"VWAP: {LTR}{round(candidate['vwap'], 2)}",
+        f"الحجم: {LTR}{int(candidate['volume']):,} سهم",
+        f"المعدل: {LTR}{int(candidate['average_volume']):,} سهم",
+        f"القفزة: {LTR}{round(ratio, 1)}× المعدل",
+        "",
+        f"الشارت: {LTR}{tradingview_url(symbol)}",
+    ]
+
+    return "\n".join(lines)
+
+
+def tradingview_url(symbol):
+    return f"https://www.tradingview.com/symbols/{symbol}/"
 
 
 def cmd_list(config):

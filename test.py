@@ -72,9 +72,10 @@ FILTER_CASES = [
 ]
 
 
-def fake_api(quotes, vwaps):
+def fake_api(quotes, vwaps, atrs=None):
     """يبدّل نداءات Twelve Data ببيانات محضّرة، عشان نختبر منطق الفلترة
     نفسه بدون إنترنت وبدون ما نصرف أرصدة."""
+    atrs = atrs or {}
 
     def handler(api_key, endpoint, params):
         if endpoint == "quote":
@@ -86,49 +87,67 @@ def fake_api(quotes, vwaps):
             return matched
         if endpoint == "vwap":
             return {"values": [{"vwap": str(vwaps[params["symbol"]])}]}
+        if endpoint == "atr":
+            symbol = params["symbol"]
+            if symbol not in atrs:
+                return {"code": 500, "message": "atr unavailable"}
+            return {"values": [{"atr": str(atrs[symbol])}]}
         return None
 
     return handler
 
 
 def scan_cases():
-    """يرجّع (الوصف، الرموز المتوقع تنبيهها) لكل حالة."""
+    """يرجّع (الوصف، quotes، vwaps، atrs، الرموز المتوقع تنبيهها) لكل حالة."""
     return [
         (
-            "قفزة حجم + فوق VWAP → تنبيه",
+            "قفزة حجم + فوق VWAP + ATR سليم → تنبيه",
             {"AAA": {"close": "10.5", "volume": "3000000", "average_volume": "1000000"}},
             {"AAA": 10.0},
+            {"AAA": 0.5},
             ["AAA"],
         ),
         (
             "قفزة حجم بس تحت VWAP → ما ينبّه",
             {"BBB": {"close": "9.5", "volume": "3000000", "average_volume": "1000000"}},
             {"BBB": 10.0},
+            {"BBB": 0.5},
             [],
         ),
         (
             "فوق VWAP بس بدون قفزة حجم → ما ينبّه",
             {"CCC": {"close": "10.5", "volume": "1100000", "average_volume": "1000000"}},
             {"CCC": 10.0},
+            {"CCC": 0.5},
             [],
         ),
         (
             "الحجم بالضبط ضعف المعدل → ينبّه (الشرط >=)",
             {"DDD": {"close": "10.5", "volume": "2000000", "average_volume": "1000000"}},
             {"DDD": 10.0},
+            {"DDD": 0.5},
             ["DDD"],
         ),
         (
             "معدل حجم صفر → يتجاهله بدل ما ينهار بقسمة على صفر",
             {"EEE": {"close": "10.5", "volume": "3000000", "average_volume": "0"}},
             {"EEE": 10.0},
+            {"EEE": 0.5},
             [],
         ),
         (
             "بيانات ناقصة → يتجاهله بدون انهيار",
             {"FFF": {"close": None, "volume": None, "average_volume": None}},
             {"FFF": 10.0},
+            {"FFF": 0.5},
             [],
+        ),
+        (
+            "الشروط الأربعة تحققت لكن ATR فشل → التنبيه يوصل بدون وقف خسارة",
+            {"GGG": {"close": "10.5", "volume": "3000000", "average_volume": "1000000"}},
+            {"GGG": 10.0},
+            {},  # ATR غير متوفر لهذا الرمز
+            ["GGG"],
         ),
     ]
 
@@ -166,15 +185,37 @@ def main():
     original_sleep = bot.time.sleep
     bot.time.sleep = lambda seconds: None  # ما ننتظر حدود المعدل في الاختبار
     try:
-        for note, quotes, vwaps, expected in cases:
-            bot.twelvedata_request = fake_api(quotes, vwaps)
+        for note, quotes, vwaps, atrs, expected in cases:
+            bot.twelvedata_request = fake_api(quotes, vwaps, atrs)
             bot.save_watchlist([{"symbol": s} for s in quotes])
             alerts, error = bot.scan_watchlist({"twelvedata_api_key": "x"})
             got = sorted(a["symbol"] for a in (alerts or []))
             ok = error is None and got == sorted(expected)
             failures += not ok
             status = "نجح  " if ok else "فشل  "
-            print(f"{status} الفحص: {note:50s} -> {got}")
+            print(f"{status} الفحص: {note:55s} -> {got}")
+
+        # حالة GGG لازم يوصل تنبيهها بدون وقف خسارة، مو يسقط بصمت
+        bot.twelvedata_request = fake_api(
+            {"GGG": {"close": "10.5", "volume": "3000000", "average_volume": "1000000"}}, {"GGG": 10.0}, {}
+        )
+        bot.save_watchlist([{"symbol": "GGG"}])
+        alerts, _ = bot.scan_watchlist({"twelvedata_api_key": "x"})
+        ok = len(alerts) == 1 and alerts[0]["stop_loss"] is None
+        failures += not ok
+        print(f"{'نجح ' if ok else 'فشل '} فشل ATR: التنبيه يحمل stop_loss=None، ما يسقط بالكامل")
+
+        # حساب وقف الخسارة نفسه: entry - (ATR × مضاعف)
+        bot.twelvedata_request = fake_api(
+            {"HHH": {"close": "10.5", "volume": "3000000", "average_volume": "1000000"}}, {"HHH": 10.0}, {"HHH": 2.0}
+        )
+        bot.save_watchlist([{"symbol": "HHH"}])
+        alerts, _ = bot.scan_watchlist({"twelvedata_api_key": "x", "atr_multiplier": 1.5})
+        expected_stop = 10.5 - (2.0 * 1.5)  # = 7.5
+        got_stop = alerts[0]["stop_loss"] if alerts else None
+        ok = got_stop is not None and abs(got_stop - expected_stop) < 0.001
+        failures += not ok
+        print(f"{'نجح ' if ok else 'فشل '} حساب وقف الخسارة: entry=10.5 ATR=2.0 x1.5 -> {got_stop} (متوقع {expected_stop})")
     finally:
         bot.twelvedata_request = original_request
         bot.time.sleep = original_sleep
@@ -182,10 +223,11 @@ def main():
             os.remove(bot.WATCHLIST_PATH)
 
     print()
+    total = len(CASES) + len(SUNDAY_CASES) + len(FILTER_CASES) + len(cases) + 2
     if failures:
         print(f"❌ فشل {failures} اختبار")
         sys.exit(1)
-    print(f"✅ كل الاختبارات نجحت ({len(CASES) + len(SUNDAY_CASES) + len(FILTER_CASES) + len(cases)})")
+    print(f"✅ كل الاختبارات نجحت ({total})")
 
 
 if __name__ == "__main__":
