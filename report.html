@@ -349,9 +349,9 @@
       تيليجرام لما يحقق سهم شروط محددة.
     </p>
     <div class="stamp">
-      <span class="pill pill--ok">المرحلة ٢ خلصت</span>
+      <span class="pill pill--ok">المراحل ١–٣ خلصت</span>
       <span class="pill pill--ok">البوت شغّال ويستقبل أوامر</span>
-      <span class="pill pill--warn">المرحلة ٣ جاهزة تبدأ</span>
+      <span class="pill pill--warn">باقي: بناء القائمة أول مرة</span>
     </div>
   </header>
 
@@ -387,22 +387,22 @@
         <span class="pill pill--ok">مجرّبة على الجهاز</span>
       </div>
 
-      <div class="stage stage--next">
+      <div class="stage stage--done">
         <div class="stage-n">٣</div>
         <div class="stage-body">
-          <div class="stage-title">الفلترة على قائمة ٥٠–١٠٠ سهم</div>
-          <div class="stage-note">كل البيانات المطلوبة متوفرة ومفاتيحها جاهزة على الجوال</div>
+          <div class="stage-title">الفلترة الكاملة على قائمة الأسهم</div>
+          <div class="stage-note">القائمة تُبنى آلياً من السوق كله — مو يدوياً كما كانت الخطة</div>
         </div>
-        <span class="pill pill--warn">التالية</span>
+        <span class="pill pill--ok">مبنية ومُختبرة</span>
       </div>
 
-      <div class="stage stage--todo">
+      <div class="stage stage--next">
         <div class="stage-n">٤</div>
         <div class="stage-body">
           <div class="stage-title">حساب ATR ووقف الخسارة</div>
-          <div class="stage-note">انحلّت — Twelve Data يرجّع ATR محسوب جاهز</div>
+          <div class="stage-note">Twelve Data يرجّع ATR محسوب جاهز — ما نحسبه على الجوال</div>
         </div>
-        <span class="pill pill--quiet">لاحقاً</span>
+        <span class="pill pill--warn">التالية</span>
       </div>
 
       <div class="stage stage--todo">
@@ -425,13 +425,19 @@
       خارجية</strong> — بايثون الأساسي بس.
     </p>
 
+    <p>
+      الأوامر كلها في <strong>زر القائمة</strong> داخل المحادثة — ما تحتاج
+      تحفظها. القائمة تتبني من نفس مصدر <span class="mono">/help</span> في
+      الكود، فما يصير اختلاف بينهم.
+    </p>
     <div class="cmds">
-      <div class="cmd"><code>/help</code><span>يعرض الأوامر</span></div>
-      <div class="cmd"><code>/status</code><span>البوت شغّال؟ السوق مفتوح؟</span></div>
+      <div class="cmd"><code>/refresh</code><span>يبني قائمة المراقبة من السوق كله</span></div>
+      <div class="cmd"><code>/list</code><span>يعرض قائمة المراقبة</span></div>
+      <div class="cmd"><code>/scan</code><span>فحص فوري الحين</span></div>
+      <div class="cmd"><code>/status</code><span>البوت شغّال؟ السوق مفتوح؟ آخر فحص؟</span></div>
       <div class="cmd"><code>/price AAPL</code><span>سعر أي سهم أمريكي</span></div>
-      <div class="cmd"><code>/mute</code><span>يوقف التنبيهات — البوت يضل شغّال</span></div>
-      <div class="cmd"><code>/unmute</code><span>يرجّع التنبيهات</span></div>
-      <div class="cmd"><code>/list &nbsp;/refresh &nbsp;/scan</code><span>مع المرحلة ٣</span></div>
+      <div class="cmd"><code>/mute &nbsp;/unmute</code><span>يوقف التنبيهات — البوت يضل شغّال</span></div>
+      <div class="cmd"><code>/help</code><span>يعرض الأوامر</span></div>
     </div>
 
     <h3>يسمع ٢٤ ساعة، ويفحص وقت السوق بس</h3>
@@ -782,11 +788,16 @@
   <section>
     <h2>الخطوة الجاية</h2>
     <p>
-      المرحلة ٣ مباشرة — بناء القائمة من Finnhub، والفلترة من Twelve Data.
-      <strong>ما عاد في شي محجوب في المواصفات:</strong> الشروط الأربعة كلها
-      لها مصدر بيانات مجرَّب، ووقف الخسارة بـ ATR كذلك، والمفاتيح الثلاثة
-      محفوظة على الجوال.
+      <strong>شغّل <span class="mono">/refresh</span> أول مرة</strong> عشان
+      تنبني قائمة المراقبة الحقيقية من السوق. ياخذ ساعة ونص، وتقدر تستخدم
+      باقي الأوامر خلاله.
     </p>
+    <p>
+      بعدها راقب النتائج وعدّل <strong>نسبة قفزة الحجم</strong> — قيمتها
+      الحالية ٢× المعدل، وهي <strong>تجريبية بالتصميم</strong>: المواصفات
+      نفسها تقول تُحدد بالتجربة. لو التنبيهات كثيرة نرفعها، ولو نادرة ننزلها.
+    </p>
+    <p>ثم المرحلة ٤ — ATR ووقف الخسارة داخل التنبيه.</p>
   </section>
 
   <footer>
