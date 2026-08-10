@@ -1,0 +1,591 @@
+<title>تقرير بوت تنبيهات الأسهم</title>
+<style>
+  :root {
+    --ground:        #EEF1F5;
+    --surface:       #FFFFFF;
+    --surface-sunk:  #E4E9F0;
+    --line:          #CBD4E0;
+    --line-soft:     #DDE3EC;
+    --text:          #131A26;
+    --text-dim:      #4C5768;
+    --text-faint:    #6E7A8C;
+    --accent:        #A8681A;
+    --accent-soft:   #F3E4CE;
+    --ok:            #1B7A55;
+    --ok-soft:       #D8EDE4;
+    --stop:          #B23A32;
+    --stop-soft:     #F6DEDC;
+    --warn:          #96661A;
+    --warn-soft:     #F7E9D2;
+    --shadow:        0 1px 2px rgba(19, 26, 38, .06), 0 6px 20px rgba(19, 26, 38, .05);
+
+    --ar: "SF Arabic", "Geeza Pro", "Noto Sans Arabic", "Segoe UI", "Tahoma", system-ui, sans-serif;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:       #0C111A;
+      --surface:      #141B26;
+      --surface-sunk: #1B2431;
+      --line:         #2B3646;
+      --line-soft:    #222C3A;
+      --text:         #E6EBF2;
+      --text-dim:     #A3AEBF;
+      --text-faint:   #7A8699;
+      --accent:       #E0A24A;
+      --accent-soft:  #33260F;
+      --ok:           #4FC195;
+      --ok-soft:      #102E24;
+      --stop:         #EC7B72;
+      --stop-soft:    #331A18;
+      --warn:         #DDA34B;
+      --warn-soft:    #302411;
+      --shadow:       0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .28);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:       #0C111A;
+    --surface:      #141B26;
+    --surface-sunk: #1B2431;
+    --line:         #2B3646;
+    --line-soft:    #222C3A;
+    --text:         #E6EBF2;
+    --text-dim:     #A3AEBF;
+    --text-faint:   #7A8699;
+    --accent:       #E0A24A;
+    --accent-soft:  #33260F;
+    --ok:           #4FC195;
+    --ok-soft:      #102E24;
+    --stop:         #EC7B72;
+    --stop-soft:    #331A18;
+    --warn:         #DDA34B;
+    --warn-soft:    #302411;
+    --shadow:       0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .28);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--ground);
+    color: var(--text);
+    font-family: var(--ar);
+    line-height: 1.75;
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    direction: rtl;
+    max-width: 60rem;
+    margin: 0 auto;
+    padding: clamp(1.25rem, 4vw, 3.5rem) clamp(1rem, 4vw, 2rem) 5rem;
+    display: flex;
+    flex-direction: column;
+    gap: clamp(2rem, 5vw, 3.25rem);
+  }
+
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; direction: ltr; unicode-bidi: isolate; }
+
+  /* ---------- masthead ---------- */
+
+  .masthead { display: flex; flex-direction: column; gap: .85rem; }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: .7rem;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    direction: ltr;
+    text-align: right;
+  }
+
+  h1 {
+    font-size: clamp(1.75rem, 5.5vw, 2.9rem);
+    line-height: 1.25;
+    font-weight: 700;
+    letter-spacing: -.015em;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .standfirst {
+    font-size: clamp(1rem, 2.4vw, 1.15rem);
+    color: var(--text-dim);
+    max-width: 44ch;
+    margin: 0;
+  }
+
+  .stamp {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem .75rem;
+    align-items: center;
+    padding-top: .35rem;
+  }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: .4rem;
+    font-size: .8rem;
+    font-weight: 600;
+    padding: .22rem .7rem;
+    border-radius: 999px;
+    border: 1px solid transparent;
+  }
+  .pill--ok    { background: var(--ok-soft);   color: var(--ok);   border-color: color-mix(in srgb, var(--ok) 28%, transparent); }
+  .pill--warn  { background: var(--warn-soft); color: var(--warn); border-color: color-mix(in srgb, var(--warn) 28%, transparent); }
+  .pill--stop  { background: var(--stop-soft); color: var(--stop); border-color: color-mix(in srgb, var(--stop) 28%, transparent); }
+  .pill--quiet { background: var(--surface-sunk); color: var(--text-dim); border-color: var(--line-soft); }
+
+  /* ---------- tape ---------- */
+
+  .tape {
+    background: var(--surface);
+    border: 1px solid var(--line-soft);
+    border-radius: .7rem;
+    box-shadow: var(--shadow);
+    padding: .9rem 1.1rem;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: .4rem 1.5rem;
+    overflow-x: auto;
+  }
+  .tape-label {
+    font-size: .72rem;
+    color: var(--text-faint);
+    letter-spacing: .04em;
+    width: 100%;
+  }
+  .tape-item { display: inline-flex; align-items: baseline; gap: .4rem; font-size: .95rem; }
+  .tape-key { color: var(--text-faint); font-size: .8rem; }
+  .tape-val { font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 600; direction: ltr; unicode-bidi: isolate; }
+  .tape-val.down { color: var(--stop); }
+
+  /* ---------- sections ---------- */
+
+  section { display: flex; flex-direction: column; gap: 1.1rem; }
+
+  h2 {
+    font-size: 1.3rem;
+    font-weight: 700;
+    margin: 0;
+    padding-bottom: .6rem;
+    border-bottom: 2px solid var(--line);
+    letter-spacing: -.01em;
+  }
+
+  h3 { font-size: 1rem; font-weight: 700; margin: 0; }
+
+  p { margin: 0; color: var(--text-dim); max-width: 62ch; }
+  strong { color: var(--text); font-weight: 700; }
+
+  /* ---------- stage rail ---------- */
+
+  .rail { display: flex; flex-direction: column; gap: .6rem; }
+
+  .stage {
+    display: grid;
+    grid-template-columns: 2.1rem 1fr auto;
+    align-items: center;
+    gap: .9rem;
+    background: var(--surface);
+    border: 1px solid var(--line-soft);
+    border-radius: .6rem;
+    padding: .8rem 1rem;
+  }
+  .stage--done { border-inline-start: 3px solid var(--ok); }
+  .stage--next { border-inline-start: 3px solid var(--accent); background: var(--surface); box-shadow: var(--shadow); }
+  .stage--todo { opacity: .72; }
+
+  .stage-n {
+    font-family: var(--mono);
+    font-size: .95rem;
+    font-weight: 700;
+    color: var(--text-faint);
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .stage--done .stage-n { color: var(--ok); }
+  .stage--next .stage-n { color: var(--accent); }
+  .stage-body { display: flex; flex-direction: column; gap: .1rem; min-width: 0; }
+  .stage-title { font-weight: 600; font-size: .97rem; }
+  .stage-note { font-size: .82rem; color: var(--text-faint); }
+
+  /* ---------- generic table ---------- */
+
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line-soft); border-radius: .6rem; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: .92rem; min-width: 30rem; }
+  th, td { text-align: right; padding: .7rem .9rem; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+  thead th {
+    font-size: .74rem;
+    letter-spacing: .06em;
+    color: var(--text-faint);
+    font-weight: 600;
+    background: var(--surface-sunk);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td code, .mono {
+    font-family: var(--mono);
+    font-size: .85em;
+    direction: ltr;
+    unicode-bidi: isolate;
+    display: inline-block;
+    background: var(--surface-sunk);
+    padding: .05rem .35rem;
+    border-radius: .25rem;
+    color: var(--text);
+  }
+
+  .verdict { white-space: nowrap; font-weight: 700; font-size: .86rem; }
+  .verdict--ok   { color: var(--ok); }
+  .verdict--warn { color: var(--warn); }
+  .verdict--stop { color: var(--stop); }
+
+  /* ---------- callout ---------- */
+
+  .callout {
+    background: var(--accent-soft);
+    border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent);
+    border-radius: .7rem;
+    padding: 1.15rem 1.3rem;
+    display: flex;
+    flex-direction: column;
+    gap: .7rem;
+  }
+  .callout h3 { color: var(--accent); }
+  .callout p { color: var(--text); }
+  .choices { display: flex; flex-direction: column; gap: .45rem; margin: 0; padding: 0; list-style: none; }
+  .choices li {
+    display: flex;
+    gap: .6rem;
+    align-items: baseline;
+    font-size: .93rem;
+    color: var(--text);
+  }
+  .choices li::before {
+    content: "◂";
+    color: var(--accent);
+    font-size: .8rem;
+    flex: none;
+  }
+
+  /* ---------- flow ---------- */
+
+  .flow { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: .75rem; }
+  .node {
+    background: var(--surface);
+    border: 1px solid var(--line-soft);
+    border-radius: .6rem;
+    padding: .95rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: .3rem;
+  }
+  .node-role {
+    font-family: var(--mono);
+    font-size: .68rem;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--accent);
+    direction: ltr;
+    text-align: right;
+  }
+  .node-name { font-weight: 700; font-size: .98rem; }
+  .node-desc { font-size: .85rem; color: var(--text-dim); }
+
+  /* ---------- command list ---------- */
+
+  .cmds { display: flex; flex-direction: column; gap: .5rem; }
+  .cmd {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: .3rem .9rem;
+    background: var(--surface);
+    border: 1px solid var(--line-soft);
+    border-radius: .5rem;
+    padding: .6rem .85rem;
+  }
+  .cmd code {
+    font-family: var(--mono);
+    font-size: .87rem;
+    direction: ltr;
+    unicode-bidi: isolate;
+    color: var(--text);
+    background: none;
+    padding: 0;
+  }
+  .cmd span { font-size: .85rem; color: var(--text-faint); }
+
+  footer {
+    border-top: 1px solid var(--line);
+    padding-top: 1.1rem;
+    font-size: .82rem;
+    color: var(--text-faint);
+    display: flex;
+    flex-wrap: wrap;
+    gap: .3rem 1.2rem;
+  }
+
+  @media (max-width: 30rem) {
+    .stage { grid-template-columns: 1.6rem 1fr; }
+    .stage > .pill { grid-column: 2; justify-self: start; }
+  }
+</style>
+
+<div class="page" lang="ar" dir="rtl">
+
+  <header class="masthead">
+    <div class="eyebrow">STOCK-ANALYZER &middot; 2026-08-10</div>
+    <h1>بوت تنبيهات الأسهم الأمريكية</h1>
+    <p class="standfirst">
+      بوت بايثون يشتغل على جوال أندرويد، يفحص السوق الأمريكي ويرسل تنبيه على
+      تيليجرام لما يحقق سهم شروط محددة.
+    </p>
+    <div class="stamp">
+      <span class="pill pill--ok">المرحلة ٢ خلصت</span>
+      <span class="pill pill--warn">المرحلة ٣ موقوفة على قرار</span>
+      <span class="pill pill--quiet">شغّال على الجوال</span>
+    </div>
+  </header>
+
+  <div class="tape">
+    <div class="tape-label">آخر اختبار فعلي على الجوال — أمر <span class="mono">python bot.py price AAPL</span></div>
+    <div class="tape-item"><span class="tape-key">AAPL</span><span class="tape-val">305.71</span></div>
+    <div class="tape-item"><span class="tape-key">التغيّر</span><span class="tape-val down">−7.62</span></div>
+    <div class="tape-item"><span class="tape-key">النسبة</span><span class="tape-val down">−2.43%</span></div>
+    <div class="tape-item"><span class="tape-key">أعلى</span><span class="tape-val">310.01</span></div>
+    <div class="tape-item"><span class="tape-key">أقل</span><span class="tape-val">304.61</span></div>
+    <div class="tape-item"><span class="tape-key">الرسالة</span><span class="tape-val">وصلت ✓</span></div>
+  </div>
+
+  <section>
+    <h2>وين وصلنا</h2>
+    <div class="rail">
+
+      <div class="stage stage--done">
+        <div class="stage-n">١</div>
+        <div class="stage-body">
+          <div class="stage-title">بوت تيليجرام يرسل رسالة تجريبية</div>
+          <div class="stage-note">البوت أُنشئ، والتوكن ورقم المحادثة محفوظين على الجوال</div>
+        </div>
+        <span class="pill pill--ok">مجرّبة على الجهاز</span>
+      </div>
+
+      <div class="stage stage--done">
+        <div class="stage-n">٢</div>
+        <div class="stage-body">
+          <div class="stage-title">ربط Finnhub وجلب سعر سهم واحد</div>
+          <div class="stage-note">ثلاث تجارب نجحت: رمز صحيح، ورمز غلط، وبدون رمز</div>
+        </div>
+        <span class="pill pill--ok">مجرّبة على الجهاز</span>
+      </div>
+
+      <div class="stage stage--next">
+        <div class="stage-n">٣</div>
+        <div class="stage-body">
+          <div class="stage-title">الفلترة على قائمة ٥٠–١٠٠ سهم</div>
+          <div class="stage-note">جاهزة تبدأ — بس محتاجة قرار في حدود الباقة المجانية أولاً</div>
+        </div>
+        <span class="pill pill--warn">موقوفة على قرار</span>
+      </div>
+
+      <div class="stage stage--todo">
+        <div class="stage-n">٤</div>
+        <div class="stage-body">
+          <div class="stage-title">حساب ATR ووقف الخسارة</div>
+          <div class="stage-note">يحتاج بيانات تاريخية — غير متاحة مجاناً</div>
+        </div>
+        <span class="pill pill--quiet">لاحقاً</span>
+      </div>
+
+      <div class="stage stage--todo">
+        <div class="stage-n">٥</div>
+        <div class="stage-body">
+          <div class="stage-title">بوت إدارة المخاطر</div>
+          <div class="stage-note">يحتاج حساب تداول فعلي</div>
+        </div>
+        <span class="pill pill--quiet">آخر شي</span>
+      </div>
+
+    </div>
+  </section>
+
+  <section>
+    <h2>الشي اللي يشتغل الحين</h2>
+    <p>
+      كل الكود في ملف واحد <span class="mono">bot.py</span>، و<strong>بدون أي
+      مكتبة خارجية</strong> — بايثون الأساسي بس، فما يحتاج أي تثبيت على الجوال.
+    </p>
+    <div class="cmds">
+      <div class="cmd"><code>python bot.py</code><span>رسالة تجريبية على تيليجرام</span></div>
+      <div class="cmd"><code>python bot.py chatid</code><span>يطبع رقم المحادثة</span></div>
+      <div class="cmd"><code>python bot.py price AAPL</code><span>يجيب السعر ويرسله</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>حدود الباقة المجانية — أهم شي في التقرير</h2>
+    <p>
+      اختُبرت نقاط Finnhub وحدة وحدة بالمفتاح الحقيقي بتاريخ ٢٠٢٦-٠٨-١٠.
+      <strong>النتيجة تغيّر خطة المرحلتين ٣ و ٤</strong>، وعشان كذا الفحص
+      انعمل قبل ما ينبني أي شي عليها.
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>البيانات</th>
+            <th>المصدر</th>
+            <th>الحالة</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>السعر الحالي وأعلى/أقل اليوم</td>
+            <td><code>quote</code></td>
+            <td class="verdict verdict--ok">متاح</td>
+          </tr>
+          <tr>
+            <td>القيمة السوقية</td>
+            <td><code>profile2</code></td>
+            <td class="verdict verdict--ok">متاح</td>
+          </tr>
+          <tr>
+            <td>عدد الأسهم الحرة (Float)</td>
+            <td><code>floatingShare</code></td>
+            <td class="verdict verdict--ok">متاح</td>
+          </tr>
+          <tr>
+            <td>متوسط حجم التداول (١٠ أيام / ٣ شهور)</td>
+            <td><code>metric</code></td>
+            <td class="verdict verdict--ok">متاح</td>
+          </tr>
+          <tr>
+            <td>قائمة الأسهم الأمريكية كاملة</td>
+            <td><code>stock/symbol</code></td>
+            <td class="verdict verdict--ok">متاح</td>
+          </tr>
+          <tr>
+            <td>البيانات التاريخية (شموع OHLC)</td>
+            <td><code>stock/candle</code></td>
+            <td class="verdict verdict--stop">محجوب &mdash; 403</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      الحد الأقصى <strong>٦٠ طلب في الدقيقة</strong> — مقروء من ترويسة الرد
+      نفسها، مو من كلام الموقع. يعني فحص ١٠٠ سهم ≈ ٢٠٠ طلب ≈
+      <strong>٣–٤ دقائق للفحصة الوحدة</strong>.
+    </p>
+
+    <h3>وش يعني هذا لشروط الفلترة الأربعة</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>الشرط</th>
+            <th>الحالة</th>
+            <th>السبب</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>١ &mdash; القيمة السوقية بين ٤٠ و ٦٠ مليون</td>
+            <td class="verdict verdict--ok">جاهز</td>
+            <td>البيانات متاحة</td>
+          </tr>
+          <tr>
+            <td>٢ &mdash; الفلوت فوق ٥٠٠٬٠٠٠ سهم</td>
+            <td class="verdict verdict--ok">جاهز</td>
+            <td>البيانات متاحة</td>
+          </tr>
+          <tr>
+            <td>٣ &mdash; قفزة في حجم التداول</td>
+            <td class="verdict verdict--warn">ناقص</td>
+            <td>عندنا المتوسط، ما عندنا حجم اليوم</td>
+          </tr>
+          <tr>
+            <td>٤ &mdash; السعر فوق VWAP</td>
+            <td class="verdict verdict--stop">مو ممكن</td>
+            <td>يحتاج بيانات داخل اليوم</td>
+          </tr>
+          <tr>
+            <td>وقف الخسارة بـ ATR (المرحلة ٤)</td>
+            <td class="verdict verdict--stop">مو ممكن</td>
+            <td>يحتاج شموع تاريخية</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      <h3>القرار المطلوب قبل المرحلة ٣</h3>
+      <p>
+        شرطين من أربعة جاهزين، وواحد ناقص، وواحد مو ممكن. ما ينبني شي على هذا
+        الجزء قبل الاختيار بين:
+      </p>
+      <ul class="choices">
+        <li>نعدّل الشروط بحيث تشتغل على المتاح مجاناً</li>
+        <li>نضيف مصدر بيانات ثاني مجاني يغطي الناقص</li>
+        <li>نشترك بباقة مدفوعة في Finnhub</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2>طريقة الشغل</h2>
+    <p>
+      الكود يتعدّل على الماك، ويشتغل على الجوال، والنقل بينهم عن طريق GitHub.
+      <strong>ما نعدّل على الجوال مباشرة</strong> — الكود اللي يتكتب هناك بس
+      يصير له نسخة وحدة ما لها احتياطي.
+    </p>
+    <div class="flow">
+      <div class="node">
+        <div class="node-role">SOURCE</div>
+        <div class="node-name">الماك</div>
+        <div class="node-desc">مكان التعديل والحفظ ورفع التحديثات</div>
+      </div>
+      <div class="node">
+        <div class="node-role">SYNC</div>
+        <div class="node-name">GitHub</div>
+        <div class="node-desc">النسخة المحفوظة — ومنها ينتقل المشروع لأي جهاز</div>
+      </div>
+      <div class="node">
+        <div class="node-role">RUNTIME</div>
+        <div class="node-name">الجوال — Termux</div>
+        <div class="node-desc">مكان التشغيل، يستقبل التحديثات بـ git pull</div>
+      </div>
+    </div>
+    <p>
+      الاتصال بالجوال من الماك مباشرة بـ <span class="mono">ssh phone</span>،
+      فالتشغيل والاختبار يصيران على الجهاز الحقيقي بدون نسخ أوامر يدوي.
+      وملف الإعدادات اللي فيه التوكن والمفتاح <strong>موجود على الجوال فقط</strong>
+      وما يُرفع على GitHub أبداً.
+    </p>
+  </section>
+
+  <section>
+    <h2>الخطوة الجاية</h2>
+    <p>
+      قرار حدود الباقة المجانية أولاً. بعده تبدأ المرحلة ٣ مباشرة — قائمة
+      الأسهم والفلترة، وكل البيانات المطلوبة لها متاحة عدا اللي انذكر فوق.
+    </p>
+  </section>
+
+  <footer>
+    <span>آخر تحديث: ٢٠٢٦-٠٨-١٠</span>
+    <span>البوت: <span class="mono">@Stock7oot_bot</span></span>
+    <span>الريبو: <span class="mono">alpha2xyz/Stock-analyzer</span></span>
+  </footer>
+
+</div>
