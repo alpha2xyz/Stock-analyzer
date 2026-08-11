@@ -11,6 +11,5 @@
   "min_float_shares": 500000,
   "volume_spike_ratio": 2.0,
   "scan_interval_minutes": 15,
-  "atr_multiplier": 1.75,
-  "take_profit_percentages": [5, 10, 20, 25, 50]
+  "atr_multiplier": 1.75
 }

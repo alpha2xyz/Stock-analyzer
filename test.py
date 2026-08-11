@@ -159,14 +159,6 @@ CHAT_ID_CASES = [
     ({"telegram_chat_ids": ["444"]}, ["444"], "قائمة بعنصر واحد"),
 ]
 
-# أهداف الربح: هدف = الدخول × (1 + النسبة). ليست نسبة من ATR — انظر التعليق
-# في compute_take_profit_targets للسبب.
-TAKE_PROFIT_CASES = [
-    (10.0, [5, 10, 20, 25, 50], [(5, 10.5), (10, 11.0), (20, 12.0), (25, 12.5), (50, 15.0)]),
-    (100.0, [50, 5, 25], [(5, 105.0), (25, 125.0), (50, 150.0)]),  # ترتيب المدخل ما يهم — الخرج تصاعدي دايماً
-]
-
-
 def main():
     failures = 0
 
@@ -231,13 +223,6 @@ def main():
         ok = got_stop is not None and abs(got_stop - expected_stop) < 0.001
         failures += not ok
         print(f"{'نجح ' if ok else 'فشل '} حساب وقف الخسارة: entry=10.5 ATR=2.0 x1.5 -> {got_stop} (متوقع {expected_stop})")
-
-        # كل تنبيه لازم يحمل أهداف ربح تصاعدية جاهزة، بدون أي طلب شبكة إضافي
-        expected_targets = [round(10.5 * (1 + pct / 100), 4) for pct in [5, 10, 20, 25, 50]]
-        got_targets = [round(price, 4) for _, price in alerts[0]["take_profit"]] if alerts else []
-        ok = got_targets == expected_targets
-        failures += not ok
-        print(f"{'نجح ' if ok else 'فشل '} التنبيه يحمل أهداف ربح تصاعدية -> {got_targets}")
     finally:
         bot.twelvedata_request = original_request
         bot.time.sleep = original_sleep
@@ -253,18 +238,53 @@ def main():
         print(f"{status} allowed_chat_ids: {note:40s} -> {got}")
 
     print()
-    for entry, percentages, expected in TAKE_PROFIT_CASES:
-        got = bot.compute_take_profit_targets({"take_profit_percentages": percentages}, entry)
-        got_rounded = [(pct, round(price, 2)) for pct, price in got]
-        ok = got_rounded == expected
+    # درس 2026-08-11: إعادة تشغيل البوت أثناء /refresh مسحت 25 سهم كانوا
+    # اتلقوا لأن الحفظ كان بس في النهاية. هذا الاختبار يتأكد إن الحفظ يصير
+    # فور كل سهم جديد، مو بانتظار نهاية المسح الكامل.
+    original_finnhub = bot.finnhub_request
+    original_us_stocks = bot.us_common_stocks
+    original_sleep2 = bot.time.sleep
+    bot.time.sleep = lambda seconds: None
+
+    profiles = {
+        "AAA": {"marketCapitalization": 45.0, "floatingShare": 0.6, "name": "AAA Inc"},
+        "BBB": {"marketCapitalization": 999.0, "floatingShare": 0.6, "name": "BBB Inc"},  # يسقط بالحجم
+        "CCC": {"marketCapitalization": 50.0, "floatingShare": 0.55, "name": "CCC Inc"},
+    }
+    saves_seen = []
+
+    def fake_finnhub(api_key, endpoint, params, fatal=False):
+        return profiles.get(params["symbol"], {"_error": "missing"})
+
+    bot.us_common_stocks = lambda api_key: list(profiles.keys())
+    bot.finnhub_request = fake_finnhub
+    original_save = bot.save_watchlist
+    bot.save_watchlist = lambda wl: (saves_seen.append(len(wl)), original_save(wl))
+
+    try:
+        found, error = bot.build_watchlist({"finnhub_api_key": "x"})
+        # لازم ينحفظ مرتين (بعد AAA، وبعد CCC) — مو مرة وحدة بالنهاية بس
+        ok = error is None and saves_seen == [1, 2] and len(found) == 2
         failures += not ok
-        status = "نجح  " if ok else "فشل  "
-        print(f"{status} أهداف الربح: entry={entry} percentages={percentages} -> {got_rounded}")
+        print(f"{'نجح ' if ok else 'فشل '} build_watchlist يحفظ تدريجياً، مو بالنهاية بس -> saves={saves_seen} found={len(found)}")
+
+        # القائمة على القرص لازم تطابق النتيجة حتى لو ما استدعينا save يدوياً
+        on_disk = bot.load_watchlist()
+        ok2 = {s["symbol"] for s in on_disk} == {"AAA", "CCC"}
+        failures += not ok2
+        print(f"{'نجح ' if ok2 else 'فشل '} القائمة على القرص مطابقة للنتيجة -> {[s['symbol'] for s in on_disk]}")
+    finally:
+        bot.finnhub_request = original_finnhub
+        bot.us_common_stocks = original_us_stocks
+        bot.save_watchlist = original_save
+        bot.time.sleep = original_sleep2
+        if os.path.exists(bot.WATCHLIST_PATH):
+            os.remove(bot.WATCHLIST_PATH)
 
     print()
     total = (
-        len(CASES) + len(SUNDAY_CASES) + len(FILTER_CASES) + len(cases) + 3
-        + len(CHAT_ID_CASES) + len(TAKE_PROFIT_CASES)
+        len(CASES) + len(SUNDAY_CASES) + len(FILTER_CASES) + len(cases) + 2
+        + len(CHAT_ID_CASES) + 2
     )
     if failures:
         print(f"❌ فشل {failures} اختبار")

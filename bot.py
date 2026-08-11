@@ -266,7 +266,6 @@ COMMANDS = [
     ("list", "قائمة الأسهم المراقَبة"),
     ("scan", "فحص فوري الحين"),
     ("refresh", "يعيد بناء قائمة المراقبة من السوق كله"),
-    ("setlist", "قائمة يدوية — مثال: /setlist AAPL,TSLA"),
     ("mute", "يوقف التنبيهات مؤقتاً"),
     ("unmute", "يرجّع التنبيهات"),
     ("help", "يعرض الأوامر"),
@@ -304,7 +303,6 @@ DEFAULTS = {
     "volume_spike_ratio": 2.0,      # تجريبي — يتعدّل بعد ما نشوف نتائج حقيقية
     "scan_interval_minutes": 15,
     "atr_multiplier": 1.75,         # مضاعف وقف الخسارة، يبدأ بين 1.5 و 2 حسب المواصفات
-    "take_profit_percentages": [5, 10, 20, 25, 50],  # نسبة ربح % من سعر الدخول
 }
 
 
@@ -362,7 +360,14 @@ def passes_size_filter(config, profile):
 def build_watchlist(config, progress=None):
     """يمشي على السوق الأمريكي كله ويطلّع اللي يحقق شرط 1 و 2.
 
-    شغل طويل (ساعة ونص تقريباً) — يشتغل في الخلفية عشان ما يعطّل الأوامر.
+    شغل طويل جداً — السوق الأمريكي فيه ~18,400 سهم عادي (رقم حقيقي مقاس
+    2026-08-11، مو تقدير)، يشتغل في الخلفية عشان ما يعطّل الأوامر.
+
+    **يحفظ القائمة فور ما يلقى سهم جديد، مو بس في النهاية.** لو انقطع الشغل
+    لأي سبب — إعادة تشغيل البوت، انهيار، انقطاع نت — كل سهم اتلقى لين تلك
+    اللحظة يبقى محفوظ على القرص، ما يروح. (درس 2026-08-11: إعادة تشغيل
+    البوت أثناء فحص وصل لـ 1500/18424 ولقى 25 سهم مسحت كل شي لأن الحفظ كان
+    بس في النهاية.)
     """
     api_key = config["finnhub_api_key"]
     symbols = us_common_stocks(api_key)
@@ -372,13 +377,20 @@ def build_watchlist(config, progress=None):
 
     found = []
     checked = 0
+    next_request_at = 0.0
 
     for symbol in symbols:
+        # ننتظر بس القدر اللي يخلينا عند 55 طلب/دقيقة (تحت حد فينهب 60،
+        # هامش أمان). الفرق عن قبل: ننتظر من بداية الطلب السابق، مو نضيف
+        # ثانية كاملة فوق وقت الرد نفسه — القديمة كانت تعطي ~33 طلب/دقيقة
+        # فقط، مقاسة فعلياً، رغم إن الحد يسمح بالضعف تقريباً.
+        wait = next_request_at - time.time()
+        if wait > 0:
+            time.sleep(wait)
+        next_request_at = time.time() + (60 / 55)
+
         profile = finnhub_request(api_key, "stock/profile2", {"symbol": symbol}, fatal=False)
         checked += 1
-
-        # حد فينهب 60 طلب في الدقيقة — ثانية بين كل طلب تخلينا تحته بأمان
-        time.sleep(1)
 
         if not isinstance(profile, dict) or profile.get("_error"):
             continue
@@ -392,11 +404,11 @@ def build_watchlist(config, progress=None):
                     "float_shares": int(profile["floatingShare"] * 1_000_000),
                 }
             )
+            save_watchlist(found)  # حفظ فوري، مو بانتظار نهاية المسح الكامل
 
         if progress and checked % 250 == 0:
             progress(checked, len(symbols), len(found))
 
-    save_watchlist(found)
     return found, None
 
 
@@ -509,23 +521,9 @@ def scan_watchlist(config):
             candidate["stop_loss"] = None
             candidate["atr"] = None
 
-        # أهداف الربح ما تحتاج طلب شبكة إضافي — حساب مباشر من السعر
-        candidate["take_profit"] = compute_take_profit_targets(config, candidate["price"])
         alerts.append(candidate)
 
     return alerts, None
-
-
-def compute_take_profit_targets(config, entry_price):
-    """أهداف ربح تصاعدية كنسبة من سعر الدخول: هدف = الدخول × (1 + النسبة).
-
-    مو نسبة من ATR — لو ضربنا ATR (عادة كسور من الدولار) في نسبة صغيرة زي
-    5%، النتيجة رقم تافه ما له معنى كهدف ربح حقيقي. النسب المئوية المستديرة
-    اللي طلبها صاحب المشروع (5% 10% 20% 25% 50%) هي المعنى القياسي المتعارف
-    عليه في التداول لـ"أهداف ربح"، فبنيت عليها مباشرة.
-    """
-    percentages = setting(config, "take_profit_percentages")
-    return [(pct, entry_price * (1 + pct / 100)) for pct in sorted(percentages)]
 
 
 def compute_stop_loss(config, api_key, symbol, entry_price):
@@ -563,13 +561,6 @@ def format_alert(candidate):
         lines.append(f"(ATR {LTR}{round(candidate['atr'], 2)})")
     else:
         lines.append("⚠️ وقف الخسارة: ما قدرت أحسبه — راجع السهم يدوياً")
-
-    take_profit = candidate.get("take_profit") or []
-    if take_profit:
-        lines.append("")
-        lines.append("أهداف الربح:")
-        for pct, price in take_profit:
-            lines.append(f"  {LTR}{pct}٪ ← {LTR}{round(price, 2)}")
 
     lines += [
         "",
@@ -697,8 +688,6 @@ def handle_command(config, state, text):
         return cmd_list(config)
     if command == "/refresh":
         return start_refresh(config, state)
-    if command == "/setlist":
-        return start_setlist(config, state, args)
     if command == "/scan":
         return start_scan(config, state, manual=True)
 
@@ -744,7 +733,7 @@ def start_refresh(config, state):
     if not run_in_background("refresh", job):
         return "فيه بناء قائمة شغّال الحين. انتظر لين يخلص."
 
-    return "بديت أبني القائمة من السوق الأمريكي كله.\nياخذ ساعة ونص تقريباً، وبخبرك بالتقدم."
+    return "بديت أبني القائمة من السوق الأمريكي كله.\nياخذ عدة ساعات (السوق فيه ~18,400 سهم)، وبخبرك بالتقدم. لو انقطع لأي سبب، اللي اتلقى لين تلك اللحظة محفوظ ومو راح."
 
 
 def start_scan(config, state, manual=False):
@@ -780,63 +769,6 @@ def start_scan(config, state, manual=False):
         return "فيه فحص شغّال الحين. انتظر لين يخلص."
 
     return f"بديت أفحص {LTR}{len(watchlist)} سهم..." if manual else None
-
-
-def start_setlist(config, state, args):
-    """يبني القائمة من رموز يعطيها المستخدم مباشرة، بدل مسح السوق كله.
-
-    كل رمز يتأكد منه عبر Finnhub (نفس شرط القيمة السوقية والفلوت) — أسرع
-    بكثير من /refresh لأنه ما يمشي على آلاف الأسهم، بس على اللي أعطيته.
-    """
-    token = config["telegram_bot_token"]
-    ids = allowed_chat_ids(config)
-    api_key = config.get("finnhub_api_key")
-
-    if not args:
-        return "اكتب رموز الأسهم بعد الأمر، مفصولة بفاصلة.\nمثال: /setlist AAPL,TSLA,MSFT"
-    if not api_key:
-        return "الحقل finnhub_api_key فاضي في config.json"
-
-    symbols = sorted({s.strip().upper() for s in " ".join(args).replace(",", " ").split() if s.strip()})
-
-    def job():
-        passed, failed = [], []
-
-        for symbol in symbols:
-            profile = finnhub_request(api_key, "stock/profile2", {"symbol": symbol}, fatal=False)
-            time.sleep(1)  # حد فينهب 60 طلب/دقيقة
-
-            if not isinstance(profile, dict) or profile.get("_error") or not profile.get("marketCapitalization"):
-                failed.append((symbol, "ما لقيت بيانات له"))
-                continue
-
-            if passes_size_filter(config, profile):
-                passed.append(
-                    {
-                        "symbol": symbol,
-                        "name": profile.get("name", ""),
-                        "market_cap_musd": round(profile["marketCapitalization"], 1),
-                        "float_shares": int(profile["floatingShare"] * 1_000_000),
-                    }
-                )
-            else:
-                failed.append((symbol, "ما يحقق شرط القيمة السوقية أو الفلوت"))
-
-        save_watchlist(passed)
-
-        lines = [f"✅ القائمة الجديدة: {LTR}{len(passed)} سهم من {LTR}{len(symbols)}"]
-        if failed:
-            lines.append("")
-            lines.append("ما دخلوا القائمة:")
-            for symbol, reason in failed:
-                lines.append(f"  {LTR}{symbol} — {reason}")
-
-        broadcast(token, ids, "\n".join(lines))
-
-    if not run_in_background("refresh", job):
-        return "فيه بناء قائمة شغّال الحين. انتظر لين يخلص."
-
-    return f"بفحص {LTR}{len(symbols)} رمز..."
 
 
 def run_bot(config):
