@@ -822,9 +822,15 @@ def start_scan(config, state, manual=False):
         return "قائمة المراقبة فاضية. شغّل /refresh أول."
 
     def job():
+        started = time.time()
+        print(f"بدأ الفحص: {len(watchlist)} سهم")
+
         alerts, error = scan_watchlist(config)
         state["last_scan"] = datetime.now().strftime("%Y-%m-%d %H:%M")
         save_state(state)
+
+        took = round((time.time() - started) / 60, 1)
+        print(f"خلص الفحص في {took} دقيقة — {len(alerts or [])} تنبيه، خطأ: {error}")
 
         if error:
             broadcast(token, ids, f"❌ {error}")
@@ -832,7 +838,7 @@ def start_scan(config, state, manual=False):
 
         if not alerts:
             if manual:
-                broadcast(token, ids, "الفحص خلص — ما في سهم حقق الشروط الأربعة.")
+                broadcast(token, ids, f"الفحص خلص ({LTR}{took} دقيقة) — ما في سهم حقق الشروط الأربعة.")
             return
 
         if load_state().get("muted"):
@@ -843,9 +849,18 @@ def start_scan(config, state, manual=False):
             broadcast(token, ids, format_alert(candidate))
 
     if not run_in_background("scan", job):
-        return "فيه فحص شغّال الحين. انتظر لين يخلص."
+        return "فيه فحص شغّال الحين ⏳\nالفحص ياخذ عدة دقائق — انتظره يخلص ويجيك رده."
 
-    return f"بديت أفحص {LTR}{len(watchlist)} سهم..." if manual else None
+    if not manual:
+        return None
+
+    # الوقت المتوقع: حد Twelve Data المجاني 8 أسهم بالدقيقة، ما نقدر نتجاوزه
+    minutes = max(1, round(len(watchlist) / 8))
+    return (
+        f"بديت أفحص {LTR}{len(watchlist)} سهم ⏳\n"
+        f"ياخذ حوالي {LTR}{minutes} دقائق — الباقة المجانية تسمح بـ8 أسهم بالدقيقة بس.\n"
+        f"بجيك رد أول ما يخلص، سواء لقيت شي أو لا."
+    )
 
 
 def run_bot(config):
