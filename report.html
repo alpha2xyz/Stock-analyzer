@@ -349,7 +349,7 @@
       تيليجرام لما يحقق سهم شروط محددة.
     </p>
     <div class="stamp">
-      <span class="pill pill--ok">المراحل ١–٣ خلصت</span>
+      <span class="pill pill--ok">المراحل ١–٤ خلصت</span>
       <span class="pill pill--ok">البوت شغّال ويستقبل أوامر</span>
       <span class="pill pill--warn">باقي: بناء القائمة أول مرة</span>
     </div>
@@ -396,20 +396,20 @@
         <span class="pill pill--ok">مبنية ومُختبرة</span>
       </div>
 
-      <div class="stage stage--next">
+      <div class="stage stage--done">
         <div class="stage-n">٤</div>
         <div class="stage-body">
           <div class="stage-title">حساب ATR ووقف الخسارة</div>
-          <div class="stage-note">Twelve Data يرجّع ATR محسوب جاهز — ما نحسبه على الجوال</div>
+          <div class="stage-note">وقف الخسارة = سعر الدخول − (ATR × ١٫٧٥)، ورابط TradingView أُضيف لكل تنبيه</div>
         </div>
-        <span class="pill pill--warn">التالية</span>
+        <span class="pill pill--ok">مبنية ومُختبرة</span>
       </div>
 
       <div class="stage stage--todo">
         <div class="stage-n">٥</div>
         <div class="stage-body">
           <div class="stage-title">بوت إدارة المخاطر</div>
-          <div class="stage-note">يحتاج حساب تداول فعلي</div>
+          <div class="stage-note">يحتاج حساب تداول فعلي — ينتظر قرارك</div>
         </div>
         <span class="pill pill--quiet">آخر شي</span>
       </div>
@@ -786,18 +786,46 @@
   </section>
 
   <section>
+    <h2>وقف الخسارة — المرحلة ٤</h2>
+    <p>
+      <strong>وقف الخسارة = سعر الدخول − (ATR × ١٫٧٥)</strong>. المضاعف قابل
+      للتعديل، والمواصفات تقول يبدأ بين ١٫٥ و ٢. ATR يومي بفترة ١٤ يوم، من
+      نفس نقطة Twelve Data اللي اختُبرت سابقاً بمفتاح حقيقي.
+    </p>
+    <p>
+      <strong>رصيد إضافي واحد لكل تنبيه فقط</strong> — يشتغل بعد ما الشروط
+      الأربعة تتحقق، وهذي نادرة أصلاً، فما يأثر على الميزانية اليومية.
+    </p>
+    <div class="callout">
+      <h3>قرار مقصود: التنبيه يوصل حتى لو فشل حساب وقف الخسارة</h3>
+      <p>
+        لو طلب ATR فشل، التنبيه <strong>ما يسقط بالكامل</strong> — يوصل
+        برسالة تحذير بدل الرقم، ويطلب مراجعة يدوية. المنطق: الشروط الأربعة
+        تحققت فعلاً، فالتنبيه حقيقي — فقدان تفصيلة واحدة ما يستاهل حجبه.
+      </p>
+    </div>
+    <p>
+      <strong>رابط TradingView أُضيف لكل تنبيه</strong> — كان في مواصفات
+      المشروع الأصلية من البداية، ولم يكن مبنياً قبل الآن.
+    </p>
+  </section>
+
+  <section>
     <h2>الخطوة الجاية</h2>
     <p>
-      <strong>شغّل <span class="mono">/refresh</span> أول مرة</strong> عشان
-      تنبني قائمة المراقبة الحقيقية من السوق. ياخذ ساعة ونص، وتقدر تستخدم
-      باقي الأوامر خلاله.
+      <strong>شغّل <span class="mono">/refresh</span></strong> عشان تنبني
+      قائمة المراقبة الحقيقية من السوق. ياخذ ساعة ونص، وتقدر تستخدم باقي
+      الأوامر خلاله.
     </p>
     <p>
       بعدها راقب النتائج وعدّل <strong>نسبة قفزة الحجم</strong> — قيمتها
       الحالية ٢× المعدل، وهي <strong>تجريبية بالتصميم</strong>: المواصفات
       نفسها تقول تُحدد بالتجربة. لو التنبيهات كثيرة نرفعها، ولو نادرة ننزلها.
     </p>
-    <p>ثم المرحلة ٤ — ATR ووقف الخسارة داخل التنبيه.</p>
+    <p>
+      <strong>المرحلة ٥ (بوت إدارة المخاطر) تحتاج حساب تداول فعلي</strong> —
+      قرارها لك.
+    </p>
   </section>
 
   <footer>
