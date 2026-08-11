@@ -2,5 +2,15 @@
   "telegram_bot_token": "",
   "telegram_chat_id": "",
   "finnhub_api_key": "",
-  "twelvedata_api_key": ""
+  "twelvedata_api_key": "",
+
+  "_ملاحظة": "telegram_chat_ids (قائمة) تضيف أكثر من محادثة على نفس البوت — لو موجودة تستخدم بدل telegram_chat_id. مثال: [\"111\", \"222\"]",
+
+  "min_market_cap_musd": 40,
+  "max_market_cap_musd": 60,
+  "min_float_shares": 500000,
+  "volume_spike_ratio": 2.0,
+  "scan_interval_minutes": 15,
+  "atr_multiplier": 1.75,
+  "take_profit_percentages": [5, 10, 20, 25, 50]
 }

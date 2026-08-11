@@ -152,6 +152,21 @@ def scan_cases():
     ]
 
 
+# استقبال أكثر من محادثة على نفس البوت (2026-08-11)
+CHAT_ID_CASES = [
+    ({"telegram_chat_ids": [111, 222]}, ["111", "222"], "قائمة صريحة — شخصين"),
+    ({"telegram_chat_id": "333"}, ["333"], "الإعداد القديم لسه يشتغل — شخص واحد"),
+    ({"telegram_chat_ids": ["444"]}, ["444"], "قائمة بعنصر واحد"),
+]
+
+# أهداف الربح: هدف = الدخول × (1 + النسبة). ليست نسبة من ATR — انظر التعليق
+# في compute_take_profit_targets للسبب.
+TAKE_PROFIT_CASES = [
+    (10.0, [5, 10, 20, 25, 50], [(5, 10.5), (10, 11.0), (20, 12.0), (25, 12.5), (50, 15.0)]),
+    (100.0, [50, 5, 25], [(5, 105.0), (25, 125.0), (50, 150.0)]),  # ترتيب المدخل ما يهم — الخرج تصاعدي دايماً
+]
+
+
 def main():
     failures = 0
 
@@ -216,6 +231,13 @@ def main():
         ok = got_stop is not None and abs(got_stop - expected_stop) < 0.001
         failures += not ok
         print(f"{'نجح ' if ok else 'فشل '} حساب وقف الخسارة: entry=10.5 ATR=2.0 x1.5 -> {got_stop} (متوقع {expected_stop})")
+
+        # كل تنبيه لازم يحمل أهداف ربح تصاعدية جاهزة، بدون أي طلب شبكة إضافي
+        expected_targets = [round(10.5 * (1 + pct / 100), 4) for pct in [5, 10, 20, 25, 50]]
+        got_targets = [round(price, 4) for _, price in alerts[0]["take_profit"]] if alerts else []
+        ok = got_targets == expected_targets
+        failures += not ok
+        print(f"{'نجح ' if ok else 'فشل '} التنبيه يحمل أهداف ربح تصاعدية -> {got_targets}")
     finally:
         bot.twelvedata_request = original_request
         bot.time.sleep = original_sleep
@@ -223,7 +245,27 @@ def main():
             os.remove(bot.WATCHLIST_PATH)
 
     print()
-    total = len(CASES) + len(SUNDAY_CASES) + len(FILTER_CASES) + len(cases) + 2
+    for config, expected, note in CHAT_ID_CASES:
+        got = bot.allowed_chat_ids(config)
+        ok = got == expected
+        failures += not ok
+        status = "نجح  " if ok else "فشل  "
+        print(f"{status} allowed_chat_ids: {note:40s} -> {got}")
+
+    print()
+    for entry, percentages, expected in TAKE_PROFIT_CASES:
+        got = bot.compute_take_profit_targets({"take_profit_percentages": percentages}, entry)
+        got_rounded = [(pct, round(price, 2)) for pct, price in got]
+        ok = got_rounded == expected
+        failures += not ok
+        status = "نجح  " if ok else "فشل  "
+        print(f"{status} أهداف الربح: entry={entry} percentages={percentages} -> {got_rounded}")
+
+    print()
+    total = (
+        len(CASES) + len(SUNDAY_CASES) + len(FILTER_CASES) + len(cases) + 3
+        + len(CHAT_ID_CASES) + len(TAKE_PROFIT_CASES)
+    )
     if failures:
         print(f"❌ فشل {failures} اختبار")
         sys.exit(1)

@@ -265,7 +265,8 @@ COMMANDS = [
     ("price", "سعر سهم — مثال: /price AAPL"),
     ("list", "قائمة الأسهم المراقَبة"),
     ("scan", "فحص فوري الحين"),
-    ("refresh", "يعيد بناء قائمة المراقبة"),
+    ("refresh", "يعيد بناء قائمة المراقبة من السوق كله"),
+    ("setlist", "قائمة يدوية — مثال: /setlist AAPL,TSLA"),
     ("mute", "يوقف التنبيهات مؤقتاً"),
     ("unmute", "يرجّع التنبيهات"),
     ("help", "يعرض الأوامر"),
@@ -303,6 +304,7 @@ DEFAULTS = {
     "volume_spike_ratio": 2.0,      # تجريبي — يتعدّل بعد ما نشوف نتائج حقيقية
     "scan_interval_minutes": 15,
     "atr_multiplier": 1.75,         # مضاعف وقف الخسارة، يبدأ بين 1.5 و 2 حسب المواصفات
+    "take_profit_percentages": [5, 10, 20, 25, 50],  # نسبة ربح % من سعر الدخول
 }
 
 
@@ -501,15 +503,29 @@ def scan_watchlist(config):
         if stop is not None:
             candidate["stop_loss"] = stop["stop_loss"]
             candidate["atr"] = stop["atr"]
-            alerts.append(candidate)
         else:
             # الشروط الأربعة تحققت لكن ATR فشل — التنبيه بدون وقف خسارة
             # أفضل من ما يوصل أبداً؛ نرسله وننبّه إنه ناقص
             candidate["stop_loss"] = None
             candidate["atr"] = None
-            alerts.append(candidate)
+
+        # أهداف الربح ما تحتاج طلب شبكة إضافي — حساب مباشر من السعر
+        candidate["take_profit"] = compute_take_profit_targets(config, candidate["price"])
+        alerts.append(candidate)
 
     return alerts, None
+
+
+def compute_take_profit_targets(config, entry_price):
+    """أهداف ربح تصاعدية كنسبة من سعر الدخول: هدف = الدخول × (1 + النسبة).
+
+    مو نسبة من ATR — لو ضربنا ATR (عادة كسور من الدولار) في نسبة صغيرة زي
+    5%، النتيجة رقم تافه ما له معنى كهدف ربح حقيقي. النسب المئوية المستديرة
+    اللي طلبها صاحب المشروع (5% 10% 20% 25% 50%) هي المعنى القياسي المتعارف
+    عليه في التداول لـ"أهداف ربح"، فبنيت عليها مباشرة.
+    """
+    percentages = setting(config, "take_profit_percentages")
+    return [(pct, entry_price * (1 + pct / 100)) for pct in sorted(percentages)]
 
 
 def compute_stop_loss(config, api_key, symbol, entry_price):
@@ -547,6 +563,13 @@ def format_alert(candidate):
         lines.append(f"(ATR {LTR}{round(candidate['atr'], 2)})")
     else:
         lines.append("⚠️ وقف الخسارة: ما قدرت أحسبه — راجع السهم يدوياً")
+
+    take_profit = candidate.get("take_profit") or []
+    if take_profit:
+        lines.append("")
+        lines.append("أهداف الربح:")
+        for pct, price in take_profit:
+            lines.append(f"  {LTR}{pct}٪ ← {LTR}{round(price, 2)}")
 
     lines += [
         "",
@@ -593,6 +616,7 @@ def cmd_status(config, state):
         "",
         "البوت: شغّال ✅",
         f"التنبيهات: {'موقوفة 🔕' if muted else 'شغّالة 🔔'}",
+        f"يخدم: {LTR}{len(allowed_chat_ids(config))} محادثة",
         "",
         f"السوق الأمريكي: {description}",
         f"توقيت نيويورك الحين: {LTR}{ny.strftime('%Y-%m-%d %H:%M')}",
@@ -673,6 +697,8 @@ def handle_command(config, state, text):
         return cmd_list(config)
     if command == "/refresh":
         return start_refresh(config, state)
+    if command == "/setlist":
+        return start_setlist(config, state, args)
     if command == "/scan":
         return start_scan(config, state, manual=True)
 
@@ -703,21 +729,17 @@ def run_in_background(name, target):
 
 def start_refresh(config, state):
     token = config["telegram_bot_token"]
-    chat_id = config["telegram_chat_id"]
+    ids = allowed_chat_ids(config)
 
     def job():
         def progress(checked, total, found):
-            send_message(token, chat_id, f"⏳ فحصت {LTR}{checked} من {LTR}{total} — لقيت {LTR}{found}")
+            broadcast(token, ids, f"⏳ فحصت {LTR}{checked} من {LTR}{total} — لقيت {LTR}{found}")
 
         found, error = build_watchlist(config, progress)
         if error:
-            send_message(token, chat_id, f"❌ {error}")
+            broadcast(token, ids, f"❌ {error}")
             return
-        send_message(
-            token,
-            chat_id,
-            f"✅ قائمة المراقبة جاهزة: {LTR}{len(found)} سهم.\nاكتب /list تشوفها.",
-        )
+        broadcast(token, ids, f"✅ قائمة المراقبة جاهزة: {LTR}{len(found)} سهم.\nاكتب /list تشوفها.")
 
     if not run_in_background("refresh", job):
         return "فيه بناء قائمة شغّال الحين. انتظر لين يخلص."
@@ -727,7 +749,7 @@ def start_refresh(config, state):
 
 def start_scan(config, state, manual=False):
     token = config["telegram_bot_token"]
-    chat_id = config["telegram_chat_id"]
+    ids = allowed_chat_ids(config)
 
     watchlist = load_watchlist()
     if not watchlist:
@@ -739,12 +761,12 @@ def start_scan(config, state, manual=False):
         save_state(state)
 
         if error:
-            send_message(token, chat_id, f"❌ {error}")
+            broadcast(token, ids, f"❌ {error}")
             return
 
         if not alerts:
             if manual:
-                send_message(token, chat_id, "الفحص خلص — ما في سهم حقق الشروط الأربعة.")
+                broadcast(token, ids, "الفحص خلص — ما في سهم حقق الشروط الأربعة.")
             return
 
         if load_state().get("muted"):
@@ -752,7 +774,7 @@ def start_scan(config, state, manual=False):
             return
 
         for candidate in alerts:
-            send_message(token, chat_id, format_alert(candidate))
+            broadcast(token, ids, format_alert(candidate))
 
     if not run_in_background("scan", job):
         return "فيه فحص شغّال الحين. انتظر لين يخلص."
@@ -760,10 +782,69 @@ def start_scan(config, state, manual=False):
     return f"بديت أفحص {LTR}{len(watchlist)} سهم..." if manual else None
 
 
+def start_setlist(config, state, args):
+    """يبني القائمة من رموز يعطيها المستخدم مباشرة، بدل مسح السوق كله.
+
+    كل رمز يتأكد منه عبر Finnhub (نفس شرط القيمة السوقية والفلوت) — أسرع
+    بكثير من /refresh لأنه ما يمشي على آلاف الأسهم، بس على اللي أعطيته.
+    """
+    token = config["telegram_bot_token"]
+    ids = allowed_chat_ids(config)
+    api_key = config.get("finnhub_api_key")
+
+    if not args:
+        return "اكتب رموز الأسهم بعد الأمر، مفصولة بفاصلة.\nمثال: /setlist AAPL,TSLA,MSFT"
+    if not api_key:
+        return "الحقل finnhub_api_key فاضي في config.json"
+
+    symbols = sorted({s.strip().upper() for s in " ".join(args).replace(",", " ").split() if s.strip()})
+
+    def job():
+        passed, failed = [], []
+
+        for symbol in symbols:
+            profile = finnhub_request(api_key, "stock/profile2", {"symbol": symbol}, fatal=False)
+            time.sleep(1)  # حد فينهب 60 طلب/دقيقة
+
+            if not isinstance(profile, dict) or profile.get("_error") or not profile.get("marketCapitalization"):
+                failed.append((symbol, "ما لقيت بيانات له"))
+                continue
+
+            if passes_size_filter(config, profile):
+                passed.append(
+                    {
+                        "symbol": symbol,
+                        "name": profile.get("name", ""),
+                        "market_cap_musd": round(profile["marketCapitalization"], 1),
+                        "float_shares": int(profile["floatingShare"] * 1_000_000),
+                    }
+                )
+            else:
+                failed.append((symbol, "ما يحقق شرط القيمة السوقية أو الفلوت"))
+
+        save_watchlist(passed)
+
+        lines = [f"✅ القائمة الجديدة: {LTR}{len(passed)} سهم من {LTR}{len(symbols)}"]
+        if failed:
+            lines.append("")
+            lines.append("ما دخلوا القائمة:")
+            for symbol, reason in failed:
+                lines.append(f"  {LTR}{symbol} — {reason}")
+
+        broadcast(token, ids, "\n".join(lines))
+
+    if not run_in_background("refresh", job):
+        return "فيه بناء قائمة شغّال الحين. انتظر لين يخلص."
+
+    return f"بفحص {LTR}{len(symbols)} رمز..."
+
+
 def run_bot(config):
     """الحلقة الرئيسية: يستمع لأوامر تيليجرام على مدار اليوم."""
     token = config["telegram_bot_token"]
-    allowed_chat_id = str(require_chat_id(config))
+    allowed_ids = allowed_chat_ids(config)
+    # أول محادثة بالقائمة = المالك — هو اللي يوصله تنبيه "شخص جديد راسل البوت"
+    owner_chat_id = allowed_ids[0]
 
     state = load_state()
     state["started_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -773,8 +854,8 @@ def run_bot(config):
     print("قائمة الأوامر:", "انسجلت عند تيليجرام ✅" if menu_ok else "ما انسجلت ⚠️")
 
     is_open, description = market_state()
-    send_message(token, allowed_chat_id, f"البوت اشتغل ✅\nالسوق: {description}\n\nاضغط زر القائمة تشوف الأوامر.")
-    print(f"البوت شغّال. السوق: {description}. اضغط Ctrl+C للإيقاف.")
+    broadcast(token, allowed_ids, f"البوت اشتغل ✅\nالسوق: {description}\n\nاضغط زر القائمة تشوف الأوامر.")
+    print(f"البوت شغّال. السوق: {description}. يخدم {len(allowed_ids)} محادثة. اضغط Ctrl+C للإيقاف.")
 
     offset = state.get("update_offset", 0)
     last_auto_scan = 0.0
@@ -811,16 +892,24 @@ def run_bot(config):
             if not text:
                 continue
 
-            # أمان: البوت ما يرد إلا على المحادثة المصرّح لها. بدون هذا،
-            # أي شخص يلقى اسم البوت يقدر يشغّله ويصرف أرصدتنا.
-            if chat_id != allowed_chat_id:
-                print(f"تجاهلت رسالة من محادثة غير مصرّح لها: {chat_id}")
+            # أمان: البوت ما يرد إلا على محادثة مصرّح لها. بدون هذا، أي شخص
+            # يلقى اسم البوت يقدر يشغّله ويصرف أرصدتنا. لغريب راسل البوت،
+            # ننبّه المالك برقم محادثته عشان يضيفه بنفسه لو يبي — وما نرد
+            # على الغريب نفسه بأي شي يكشف تفاصيل البوت.
+            if chat_id not in allowed_ids:
+                name = message.get("chat", {}).get("first_name") or "بدون اسم"
+                print(f"تجاهلت رسالة من محادثة غير مصرّح لها: {chat_id} ({name})")
+                send_message(
+                    token,
+                    owner_chat_id,
+                    f"👤 شخص جديد راسل البوت ولم أرد عليه.\nالاسم: {LTR}{name}\nرقم المحادثة: {LTR}{chat_id}\n\nلو تبي تضيفه، حط رقمه في telegram_chat_ids داخل config.json وأعد تشغيل البوت.",
+                )
                 continue
 
             reply = handle_command(config, state, text)
             if reply:
-                print(f"أمر: {text.strip()}")
-                send_message(token, allowed_chat_id, reply)
+                print(f"أمر من {chat_id}: {text.strip()}")
+                send_message(token, chat_id, reply)
 
 
 def require_chat_id(config):
@@ -830,6 +919,24 @@ def require_chat_id(config):
         print("شغّل: python bot.py chatid   عشان تعرف الرقم حقك.")
         sys.exit(1)
     return chat_id
+
+
+def allowed_chat_ids(config):
+    """يرجّع قائمة كل المحادثات المصرّح لها.
+
+    telegram_chat_ids (قائمة) هو الجديد — يخدم أكثر من شخص بنفس البوت.
+    لو مو موجود، نرجع لـ telegram_chat_id القديم (شخص واحد) عشان الإعدادات
+    الحالية على الجوال تشتغل بدون تعديل.
+    """
+    ids = config.get("telegram_chat_ids")
+    if ids:
+        return [str(c) for c in ids]
+    return [str(require_chat_id(config))]
+
+
+def broadcast(token, chat_ids, text):
+    for chat_id in chat_ids:
+        send_message(token, chat_id, text)
 
 
 def main():
