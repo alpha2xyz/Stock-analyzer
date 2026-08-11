@@ -12,6 +12,7 @@
 import importlib.util
 import os
 import sys
+import tempfile
 from datetime import datetime
 
 spec = importlib.util.spec_from_file_location(
@@ -19,6 +20,19 @@ spec = importlib.util.spec_from_file_location(
 )
 bot = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bot)
+
+# ⚠️ عزل الاختبارات عن البيانات الحقيقية — لا تشيل هذا أبداً.
+#
+# حادثة 2026-08-11: تشغيل `python test.py` على الجوال **مسح قائمة مراقبة
+# حقيقية فيها 335 سهم** (نتيجة ~4.5 ساعة فحص). السبب: الاختبارات كانت
+# تكتب وتحذف `bot.WATCHLIST_PATH` نفسه — نفس الملف اللي البوت يشتغل عليه.
+#
+# الحل: نحوّل مسارات البيانات لملفات مؤقتة قبل أي اختبار. من الآن، تشغيل
+# الاختبارات على الجوال وهو شغّال آمن تماماً.
+_TEST_DIR = tempfile.mkdtemp(prefix="stock-analyzer-test-")
+bot.WATCHLIST_PATH = os.path.join(_TEST_DIR, "watchlist.json")
+bot.WATCHLIST_BACKUP_PATH = os.path.join(_TEST_DIR, "watchlist.backup.json")
+bot.STATE_PATH = os.path.join(_TEST_DIR, "state.json")
 
 # (وقت UTC، فرق نيويورك المتوقع، السوق مفتوح؟، وصف)
 CASES = [
@@ -161,6 +175,20 @@ CHAT_ID_CASES = [
 
 def main():
     failures = 0
+
+    # الحارس الأول: يتأكد إن الاختبارات معزولة عن بيانات البوت الحقيقية.
+    # لو رجع أحد المسارات لمجلد المشروع، هذا الاختبار يفشل قبل ما يمس أي ملف.
+    project_dir = os.path.dirname(os.path.abspath(__file__))
+    isolated = all(
+        not os.path.abspath(path).startswith(project_dir)
+        for path in (bot.WATCHLIST_PATH, bot.WATCHLIST_BACKUP_PATH, bot.STATE_PATH)
+    )
+    failures += not isolated
+    print(f"{'نجح ' if isolated else 'فشل '} الاختبارات معزولة عن بيانات البوت الحقيقية")
+    if not isolated:
+        print("   ⛔ توقفت — تشغيل الاختبارات كذا يمسح قائمة المراقبة الحقيقية.")
+        sys.exit(1)
+    print()
 
     for utc, expected_offset, expected_open, note in CASES:
         offset = bot.new_york_offset(utc)
@@ -332,7 +360,7 @@ def main():
     print()
     total = (
         len(CASES) + len(SUNDAY_CASES) + len(FILTER_CASES) + len(cases) + 2
-        + len(CHAT_ID_CASES) + 3 + 3
+        + len(CHAT_ID_CASES) + 3 + 3 + 1
     )
     if failures:
         print(f"❌ فشل {failures} اختبار")
