@@ -282,9 +282,45 @@ def main():
             os.remove(bot.WATCHLIST_PATH)
 
     print()
+    # النسخة الاحتياطية: طلبه 2026-08-11 بعد ما خسر قائمة قديمة بلا رجعة —
+    # /refresh لازم يحفظ نسخة من القائمة الحالية قبل ما يستبدلها، و/restore
+    # يرجعها.
+    for path in (bot.WATCHLIST_PATH, bot.WATCHLIST_BACKUP_PATH):
+        if os.path.exists(path):
+            os.remove(path)
+
+    try:
+        # ما في قائمة قديمة → ما في شي يُنسخ، ولازم /restore يقول كذا بوضوح
+        ok = bot.backup_current_watchlist() is False and bot.load_watchlist_backup() is None
+        failures += not ok
+        print(f"{'نجح ' if ok else 'فشل '} بدون قائمة قديمة: ما ينسخ شي، و/restore يعرف إنه ما في نسخة")
+
+        # قائمة قديمة موجودة → تُنسخ، وتبقى كما هي حتى بعد ما القائمة
+        # الأساسية تتغيّر أو تُمسح بالكامل
+        bot.save_watchlist([{"symbol": "OLD1"}, {"symbol": "OLD2"}])
+        backed_up = bot.backup_current_watchlist()
+        bot.save_watchlist([{"symbol": "NEW1"}])  # القائمة الجديدة استبدلت القديمة
+
+        restored = bot.load_watchlist_backup()
+        ok = backed_up is True and {s["symbol"] for s in restored} == {"OLD1", "OLD2"}
+        failures += not ok
+        print(f"{'نجح ' if ok else 'فشل '} النسخة الاحتياطية تحفظ القائمة القديمة رغم استبدال الأساسية -> {[s['symbol'] for s in restored or []]}")
+
+        # cmd_restore() فعلياً يرجّع القائمة الأساسية للنسخة الاحتياطية
+        bot.cmd_restore()
+        current = bot.load_watchlist()
+        ok = {s["symbol"] for s in current} == {"OLD1", "OLD2"}
+        failures += not ok
+        print(f"{'نجح ' if ok else 'فشل '} cmd_restore() يرجّع القائمة الفعلية للنسخة القديمة -> {[s['symbol'] for s in current]}")
+    finally:
+        for path in (bot.WATCHLIST_PATH, bot.WATCHLIST_BACKUP_PATH):
+            if os.path.exists(path):
+                os.remove(path)
+
+    print()
     total = (
         len(CASES) + len(SUNDAY_CASES) + len(FILTER_CASES) + len(cases) + 2
-        + len(CHAT_ID_CASES) + 2
+        + len(CHAT_ID_CASES) + 2 + 3
     )
     if failures:
         print(f"❌ فشل {failures} اختبار")

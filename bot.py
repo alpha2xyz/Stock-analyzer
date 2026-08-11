@@ -25,6 +25,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config.json")
 STATE_PATH = os.path.join(HERE, "state.json")
 WATCHLIST_PATH = os.path.join(HERE, "watchlist.json")
+WATCHLIST_BACKUP_PATH = os.path.join(HERE, "watchlist.backup.json")
 TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
 FINNHUB_API = "https://finnhub.io/api/v1/{endpoint}"
 TWELVEDATA_API = "https://api.twelvedata.com/{endpoint}"
@@ -266,6 +267,7 @@ COMMANDS = [
     ("list", "قائمة الأسهم المراقَبة"),
     ("scan", "فحص فوري الحين"),
     ("refresh", "يعيد بناء قائمة المراقبة من السوق كله"),
+    ("restore", "يرجّع القائمة اللي كانت قبل آخر /refresh"),
     ("mute", "يوقف التنبيهات مؤقتاً"),
     ("unmute", "يرجّع التنبيهات"),
     ("help", "يعرض الأوامر"),
@@ -323,6 +325,30 @@ def load_watchlist():
 def save_watchlist(watchlist):
     with open(WATCHLIST_PATH, "w", encoding="utf-8") as f:
         json.dump(watchlist, f, ensure_ascii=False, indent=2)
+
+
+def backup_current_watchlist():
+    """ينسخ القائمة الحالية لملف احتياطي واحد، قبل ما /refresh يبدأ يستبدلها.
+
+    نسخة وحدة بس (مو تاريخ كامل) — كل /refresh جديد يستبدل النسخة
+    الاحتياطية القديمة بالقائمة اللي كانت شغالة قبله مباشرة.
+    """
+    current = load_watchlist()
+    if not current:
+        return False
+    with open(WATCHLIST_BACKUP_PATH, "w", encoding="utf-8") as f:
+        json.dump(current, f, ensure_ascii=False, indent=2)
+    return True
+
+
+def load_watchlist_backup():
+    if not os.path.exists(WATCHLIST_BACKUP_PATH):
+        return None
+    try:
+        with open(WATCHLIST_BACKUP_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
 
 
 def us_common_stocks(api_key):
@@ -579,6 +605,18 @@ def tradingview_url(symbol):
     return f"https://www.tradingview.com/symbols/{symbol}/"
 
 
+def cmd_restore():
+    if BUSY.get("refresh"):
+        return "فيه بناء قائمة شغّال الحين. انتظره يخلص قبل ما ترجع للنسخة القديمة."
+
+    backup = load_watchlist_backup()
+    if backup is None:
+        return "ما في نسخة احتياطية محفوظة — النسخة الاحتياطية تُحفظ تلقائياً أول ما تشغّل /refresh."
+
+    save_watchlist(backup)
+    return f"✅ رجعت القائمة القديمة: {LTR}{len(backup)} سهم."
+
+
 def cmd_list(config):
     watchlist = load_watchlist()
     if not watchlist:
@@ -688,6 +726,8 @@ def handle_command(config, state, text):
         return cmd_list(config)
     if command == "/refresh":
         return start_refresh(config, state)
+    if command == "/restore":
+        return cmd_restore()
     if command == "/scan":
         return start_scan(config, state, manual=True)
 
@@ -720,6 +760,14 @@ def start_refresh(config, state):
     token = config["telegram_bot_token"]
     ids = allowed_chat_ids(config)
 
+    if BUSY.get("refresh"):
+        return "فيه بناء قائمة شغّال الحين. انتظر لين يخلص."
+
+    # نحفظ القائمة الحالية احتياطياً قبل ما /refresh يبدأ يستبدلها — لو ما
+    # عجبت النتيجة الجديدة، /restore يرجّع هذي النسخة. مرة وحدة، قبل ما
+    # نبدأ الخيط، عشان ما تصير سباق مع أول حفظ داخل build_watchlist().
+    had_backup = backup_current_watchlist()
+
     def job():
         def progress(checked, total, found):
             broadcast(token, ids, f"⏳ فحصت {LTR}{checked} من {LTR}{total} — لقيت {LTR}{found}")
@@ -728,12 +776,17 @@ def start_refresh(config, state):
         if error:
             broadcast(token, ids, f"❌ {error}")
             return
-        broadcast(token, ids, f"✅ قائمة المراقبة جاهزة: {LTR}{len(found)} سهم.\nاكتب /list تشوفها.")
+        broadcast(
+            token,
+            ids,
+            f"✅ قائمة المراقبة جاهزة: {LTR}{len(found)} سهم.\nاكتب /list تشوفها.\nما عجبتك؟ اكتب /restore ترجع للقائمة القديمة.",
+        )
 
     if not run_in_background("refresh", job):
         return "فيه بناء قائمة شغّال الحين. انتظر لين يخلص."
 
-    return "بديت أبني القائمة من السوق الأمريكي كله.\nياخذ عدة ساعات (السوق فيه ~18,400 سهم)، وبخبرك بالتقدم. لو انقطع لأي سبب، اللي اتلقى لين تلك اللحظة محفوظ ومو راح."
+    note = "\nحفظت نسخة من القائمة الحالية، /restore يرجعها لو احتجتها." if had_backup else ""
+    return f"بديت أبني القائمة من السوق الأمريكي كله.\nياخذ عدة ساعات (السوق فيه ~18,400 سهم)، وبخبرك بالتقدم. لو انقطع لأي سبب، اللي اتلقى لين تلك اللحظة محفوظ ومو راح.{note}"
 
 
 def start_scan(config, state, manual=False):
