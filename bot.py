@@ -305,6 +305,7 @@ DEFAULTS = {
     "volume_spike_ratio": 2.0,      # تجريبي — يتعدّل بعد ما نشوف نتائج حقيقية
     "scan_interval_minutes": 15,
     "atr_multiplier": 1.75,         # مضاعف وقف الخسارة، يبدأ بين 1.5 و 2 حسب المواصفات
+    "max_watchlist_size": 50,       # /refresh يوقف فور ما يوصلها، بدل ما يكمل السوق كله
 }
 
 
@@ -384,10 +385,17 @@ def passes_size_filter(config, profile):
 
 
 def build_watchlist(config, progress=None):
-    """يمشي على السوق الأمريكي كله ويطلّع اللي يحقق شرط 1 و 2.
+    """يمشي على السوق الأمريكي ويطلّع اللي يحقق شرط 1 و 2، ويوقف فور ما
+    يوصل `max_watchlist_size` (افتراضياً 50) — ما يكمل باقي السوق.
 
-    شغل طويل جداً — السوق الأمريكي فيه ~18,400 سهم عادي (رقم حقيقي مقاس
-    2026-08-11، مو تقدير)، يشتغل في الخلفية عشان ما يعطّل الأوامر.
+    **ليش الحد موجود (قرار 2026-08-11، بعد تجربة حقيقية):** شرط القيمة
+    السوقية (40-60 مليون) كان مفترض إنه ضيّق ويطلّع أسهم قليلة، لكن التجربة
+    الفعلية أثبتت العكس — لقى 335 سهم مطابق من أول ~2000 سهم فحصهم بس (كثير
+    من الأسهم الأمريكية OTC/صغيرة تقع بالضبط في هذا المدى). سوق كامل بدون
+    حد كان بينتج قائمة أكبر بكثير مما تتحمّله ميزانية Twelve Data اليومية.
+
+    شغل طويل — السوق الأمريكي فيه ~18,400 سهم عادي (رقم حقيقي مقاس
+    2026-08-11)، يشتغل في الخلفية عشان ما يعطّل الأوامر.
 
     **يحفظ القائمة فور ما يلقى سهم جديد، مو بس في النهاية.** لو انقطع الشغل
     لأي سبب — إعادة تشغيل البوت، انهيار، انقطاع نت — كل سهم اتلقى لين تلك
@@ -396,6 +404,7 @@ def build_watchlist(config, progress=None):
     بس في النهاية.)
     """
     api_key = config["finnhub_api_key"]
+    max_size = setting(config, "max_watchlist_size")
     symbols = us_common_stocks(api_key)
 
     if not symbols:
@@ -432,8 +441,14 @@ def build_watchlist(config, progress=None):
             )
             save_watchlist(found)  # حفظ فوري، مو بانتظار نهاية المسح الكامل
 
+            if len(found) >= max_size:
+                break
+
         if progress and checked % 250 == 0:
             progress(checked, len(symbols), len(found))
+
+    if progress:
+        progress(checked, len(symbols), len(found))  # آخر تحديث قبل ما نرجع، حتى لو ما كان مضاعف 250
 
     return found, None
 
@@ -768,25 +783,34 @@ def start_refresh(config, state):
     # نبدأ الخيط، عشان ما تصير سباق مع أول حفظ داخل build_watchlist().
     had_backup = backup_current_watchlist()
 
+    max_size = setting(config, "max_watchlist_size")
+
     def job():
         def progress(checked, total, found):
-            broadcast(token, ids, f"⏳ فحصت {LTR}{checked} من {LTR}{total} — لقيت {LTR}{found}")
+            broadcast(token, ids, f"⏳ فحصت {LTR}{checked} — لقيت {LTR}{found} من {LTR}{max_size}")
 
         found, error = build_watchlist(config, progress)
         if error:
             broadcast(token, ids, f"❌ {error}")
             return
+
+        reached_cap = len(found) >= max_size
+        headline = (
+            f"✅ وصلت الحد: {LTR}{len(found)} سهم — وقفت الفحص."
+            if reached_cap
+            else f"✅ خلص فحص السوق كله: {LTR}{len(found)} سهم."
+        )
         broadcast(
             token,
             ids,
-            f"✅ قائمة المراقبة جاهزة: {LTR}{len(found)} سهم.\nاكتب /list تشوفها.\nما عجبتك؟ اكتب /restore ترجع للقائمة القديمة.",
+            f"{headline}\nاكتب /list تشوفها.\nما عجبتك؟ اكتب /restore ترجع للقائمة القديمة.",
         )
 
     if not run_in_background("refresh", job):
         return "فيه بناء قائمة شغّال الحين. انتظر لين يخلص."
 
     note = "\nحفظت نسخة من القائمة الحالية، /restore يرجعها لو احتجتها." if had_backup else ""
-    return f"بديت أبني القائمة من السوق الأمريكي كله.\nياخذ عدة ساعات (السوق فيه ~18,400 سهم)، وبخبرك بالتقدم. لو انقطع لأي سبب، اللي اتلقى لين تلك اللحظة محفوظ ومو راح.{note}"
+    return f"بديت أبني القائمة.\nبوقف تلقائياً فور ما أوصل {LTR}{max_size} سهم، وبخبرك بالتقدم. لو انقطع لأي سبب، اللي اتلقى محفوظ ومو راح.{note}"
 
 
 def start_scan(config, state, manual=False):

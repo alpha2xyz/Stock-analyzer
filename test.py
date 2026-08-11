@@ -262,7 +262,7 @@ def main():
     bot.save_watchlist = lambda wl: (saves_seen.append(len(wl)), original_save(wl))
 
     try:
-        found, error = bot.build_watchlist({"finnhub_api_key": "x"})
+        found, error = bot.build_watchlist({"finnhub_api_key": "x", "max_watchlist_size": 50})
         # لازم ينحفظ مرتين (بعد AAA، وبعد CCC) — مو مرة وحدة بالنهاية بس
         ok = error is None and saves_seen == [1, 2] and len(found) == 2
         failures += not ok
@@ -273,6 +273,18 @@ def main():
         ok2 = {s["symbol"] for s in on_disk} == {"AAA", "CCC"}
         failures += not ok2
         print(f"{'نجح ' if ok2 else 'فشل '} القائمة على القرص مطابقة للنتيجة -> {[s['symbol'] for s in on_disk]}")
+
+        # الحد الأقصى (قراره 2026-08-11): يوقف فور ما يوصله، ما يكمل السوق.
+        # كل الرموز هنا مطابقة، فلو ما في حد بيرجع 3 — لازم يرجع 2 بالضبط.
+        many = {f"S{i}": {"marketCapitalization": 45.0, "floatingShare": 0.6, "name": f"S{i}"} for i in range(10)}
+        bot.us_common_stocks = lambda api_key: list(many.keys())
+        bot.finnhub_request = lambda api_key, endpoint, params, fatal=False: many.get(
+            params["symbol"], {"_error": "missing"}
+        )
+        capped, _ = bot.build_watchlist({"finnhub_api_key": "x", "max_watchlist_size": 3})
+        ok3 = len(capped) == 3
+        failures += not ok3
+        print(f"{'نجح ' if ok3 else 'فشل '} build_watchlist يوقف عند الحد الأقصى (3 من 10 مطابقة) -> {len(capped)}")
     finally:
         bot.finnhub_request = original_finnhub
         bot.us_common_stocks = original_us_stocks
@@ -320,7 +332,7 @@ def main():
     print()
     total = (
         len(CASES) + len(SUNDAY_CASES) + len(FILTER_CASES) + len(cases) + 2
-        + len(CHAT_ID_CASES) + 2 + 3
+        + len(CHAT_ID_CASES) + 3 + 3
     )
     if failures:
         print(f"❌ فشل {failures} اختبار")
