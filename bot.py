@@ -453,6 +453,17 @@ def build_watchlist(config, progress=None):
     return found, None
 
 
+def is_credit_exhausted(message):
+    """يتعرّف على رسالة "خلصت أرصدة اليوم" من Twelve Data تحديداً."""
+    return "run out of api credits" in (message or "").lower()
+
+
+def next_utc_midnight(now=None):
+    """أرصدة Twelve Data تتجدد عند منتصف الليل UTC، مو منتصف الليل السعودي."""
+    now = now or datetime.now(timezone.utc)
+    return (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+
+
 def twelvedata_request(api_key, endpoint, params):
     """طلب لـ Twelve Data. يرجّع None لو صار خطأ شبكة."""
     query = dict(params)
@@ -677,6 +688,17 @@ def cmd_status(config, state):
     if last_scan:
         lines.append(f"آخر فحص: {LTR}{last_scan}")
 
+    blocked_until = state.get("twelvedata_blocked_until")
+    if blocked_until:
+        try:
+            blocked_dt = datetime.fromisoformat(blocked_until)
+        except ValueError:
+            blocked_dt = None
+        if blocked_dt and datetime.now(timezone.utc) < blocked_dt:
+            remaining = blocked_dt - datetime.now(timezone.utc)
+            hours, minutes = divmod(int(remaining.total_seconds() // 60), 60)
+            lines.append(f"⏸️ أرصدة Twelve Data خلصت — يرجع الفحص بعد حوالي {LTR}{hours} س {LTR}{minutes} د")
+
     if BUSY.get("refresh"):
         lines.append("⏳ بناء القائمة شغّال الحين")
     if BUSY.get("scan"):
@@ -821,20 +843,62 @@ def start_scan(config, state, manual=False):
     if not watchlist:
         return "قائمة المراقبة فاضية. شغّل /refresh أول."
 
+    blocked_until = state.get("twelvedata_blocked_until")
+    if blocked_until:
+        try:
+            blocked_dt = datetime.fromisoformat(blocked_until)
+        except ValueError:
+            blocked_dt = None
+        if blocked_dt and datetime.now(timezone.utc) < blocked_dt:
+            if not manual:
+                return None  # فحص تلقائي: نتجاهله بصمت، ما نصرف رصيد ولا نزعج بإشعار مكرر
+            remaining = blocked_dt - datetime.now(timezone.utc)
+            hours, minutes = divmod(int(remaining.total_seconds() // 60), 60)
+            return (
+                "⏸️ أرصدة Twelve Data خلصت لهذا اليوم.\n"
+                f"الفحص التلقائي متوقف مؤقتاً، يرجع يشتغل تلقائياً بعد حوالي {LTR}{hours} س {LTR}{minutes} د."
+            )
+
     def job():
         started = time.time()
         print(f"بدأ الفحص: {len(watchlist)} سهم")
 
         alerts, error = scan_watchlist(config)
         state["last_scan"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-        save_state(state)
 
         took = round((time.time() - started) / 60, 1)
         print(f"خلص الفحص في {took} دقيقة — {len(alerts or [])} تنبيه، خطأ: {error}")
 
         if error:
+            if is_credit_exhausted(error):
+                now_utc = datetime.now(timezone.utc)
+                previous_block = state.get("twelvedata_blocked_until")
+                was_active_block = False
+                if previous_block:
+                    try:
+                        was_active_block = datetime.fromisoformat(previous_block) > now_utc
+                    except ValueError:
+                        was_active_block = False
+
+                reset_at = next_utc_midnight(now_utc)
+                state["twelvedata_blocked_until"] = reset_at.isoformat()
+                save_state(state)
+
+                if not was_active_block:
+                    broadcast(
+                        token,
+                        ids,
+                        f"⏸️ {error}\n\n"
+                        "الفحص التلقائي بيتوقف لين تتجدد الأرصدة غداً، بدل ما يحاول كل "
+                        f"{LTR}{setting(config, 'scan_interval_minutes')} دقيقة ويفشل من فوق الحد.",
+                    )
+                return
+
+            save_state(state)
             broadcast(token, ids, f"❌ {error}")
             return
+
+        save_state(state)
 
         if not alerts:
             if manual:

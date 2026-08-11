@@ -173,6 +173,21 @@ CHAT_ID_CASES = [
     ({"telegram_chat_ids": ["444"]}, ["444"], "قائمة بعنصر واحد"),
 ]
 
+# حادثة 2026-08-11: بعد ما نفدت أرصدة Twelve Data اليومية، البوت استمر
+# يحاول يفحص كل 15 دقيقة ويفشل، ويصرف أرصدة زيادة (سلبية) بدون أي فايدة
+# لين قفل السوق. الإصلاح: يكتشف رسالة "نفدت الأرصدة" تحديداً، يوقف الفحص
+# التلقائي لين تتجدد الأرصدة (منتصف الليل UTC)، وينبّه مرة وحدة بس.
+EXHAUSTED_CASES = [
+    (
+        "Twelve Data: You have run out of API credits for the day. 801 API "
+        "credits were used, with the current limit being 800.",
+        True,
+        "رسالة انتهاء الأرصدة الحقيقية من Twelve Data",
+    ),
+    ("Twelve Data: symbol not found", False, "خطأ ثاني ما له علاقة بالأرصدة"),
+    (None, False, "بدون رسالة أصلاً"),
+]
+
 def main():
     failures = 0
 
@@ -264,6 +279,68 @@ def main():
         failures += not ok
         status = "نجح  " if ok else "فشل  "
         print(f"{status} allowed_chat_ids: {note:40s} -> {got}")
+
+    print()
+    for message, expected, note in EXHAUSTED_CASES:
+        got = bot.is_credit_exhausted(message)
+        ok = got == expected
+        failures += not ok
+        status = "نجح  " if ok else "فشل  "
+        print(f"{status} is_credit_exhausted: {note:45s} -> {got}")
+
+    print()
+    # السيناريو الكامل: أول مرة تنفد الأرصدة، البوت يوقف الفحص التلقائي
+    # ويعطّل حتى محاولات الفحص اليدوي، وينبّه مرة وحدة بس — ما يعيد المحاولة
+    # كل 15 دقيقة ويصرف أرصدة زيادة بدون فايدة.
+    scan_calls = []
+    broadcast_calls = []
+
+    def fake_scan_exhausted(config):
+        scan_calls.append(1)
+        return None, (
+            "Twelve Data: You have run out of API credits for the day. 801 "
+            "API credits were used, with the current limit being 800."
+        )
+
+    def fake_broadcast(token, ids, text):
+        broadcast_calls.append(text)
+
+    def sync_run_in_background(name, target):
+        target()  # نشغّلها مباشرة بدل خيط، عشان الاختبار يبقى حتمي
+        return True
+
+    original_scan_watchlist = bot.scan_watchlist
+    original_broadcast = bot.broadcast
+    original_run_in_background = bot.run_in_background
+    bot.scan_watchlist = fake_scan_exhausted
+    bot.broadcast = fake_broadcast
+    bot.run_in_background = sync_run_in_background
+    bot.save_watchlist([{"symbol": "AAA"}])
+
+    scan_config = {"telegram_bot_token": "x", "telegram_chat_ids": ["1"], "twelvedata_api_key": "x"}
+    state = {}
+
+    try:
+        first = bot.start_scan(scan_config, state, manual=False)
+        ok = "twelvedata_blocked_until" in state and len(broadcast_calls) == 1
+        failures += not ok
+        print(f"{'نجح ' if ok else 'فشل '} أول نفاد أرصدة: يسجّل وقت التجدد وينبّه مرة وحدة -> block={bool(state.get('twelvedata_blocked_until'))} broadcasts={len(broadcast_calls)}")
+
+        second_auto = bot.start_scan(scan_config, state, manual=False)
+        ok = second_auto is None and len(scan_calls) == 1 and len(broadcast_calls) == 1
+        failures += not ok
+        print(f"{'نجح ' if ok else 'فشل '} فحص تلقائي وهو موقوف: يتجاهل بصمت، ما يعيد الاتصال بـ Twelve Data -> scan_calls={len(scan_calls)}")
+
+        third_manual = bot.start_scan(scan_config, state, manual=True)
+        ok = bool(third_manual) and "أرصدة" in third_manual and len(scan_calls) == 1
+        failures += not ok
+        print(f"{'نجح ' if ok else 'فشل '} أمر /scan يدوي وهو موقوف: يرد برسالة واضحة، ما يتصل بـ Twelve Data -> {third_manual!r}")
+    finally:
+        bot.scan_watchlist = original_scan_watchlist
+        bot.broadcast = original_broadcast
+        bot.run_in_background = original_run_in_background
+        if os.path.exists(bot.WATCHLIST_PATH):
+            os.remove(bot.WATCHLIST_PATH)
 
     print()
     # درس 2026-08-11: إعادة تشغيل البوت أثناء /refresh مسحت 25 سهم كانوا
@@ -360,7 +437,7 @@ def main():
     print()
     total = (
         len(CASES) + len(SUNDAY_CASES) + len(FILTER_CASES) + len(cases) + 2
-        + len(CHAT_ID_CASES) + 3 + 3 + 1
+        + len(CHAT_ID_CASES) + len(EXHAUSTED_CASES) + 3 + 3 + 3 + 1
     )
     if failures:
         print(f"❌ فشل {failures} اختبار")
