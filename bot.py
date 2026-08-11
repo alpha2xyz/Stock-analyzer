@@ -542,7 +542,12 @@ def scan_watchlist(config):
         )
         time.sleep(8)
 
-        if not vwap_data or vwap_data.get("code"):
+        if not vwap_data:
+            continue
+        if vwap_data.get("code"):
+            message = f"Twelve Data: {vwap_data.get('message', 'خطأ غير معروف')}"
+            if is_credit_exhausted(message):
+                return None, message  # نفس معاملة مرحلة quote — يوقف الحظر من هنا برضو
             continue
 
         values = vwap_data.get("values") or []

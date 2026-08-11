@@ -255,6 +255,24 @@ def main():
         failures += not ok
         print(f"{'نجح ' if ok else 'فشل '} فشل ATR: التنبيه يحمل stop_loss=None، ما يسقط بالكامل")
 
+        # نفاد الأرصدة أثناء مرحلة vwap تحديداً (مو quote) — لازم يوقف الفحص
+        # بنفس معاملة نفاد الأرصدة في مرحلة quote، مو يتجاهله كأي رمز عادي
+        # بدون بيانات vwap. لو تجاهلناه، start_scan() ما يعرف إن الأرصدة
+        # خلصت، والحظر ما ينضبط.
+        def vwap_credit_exhausted(api_key, endpoint, params):
+            if endpoint == "quote":
+                return {"symbol": "JJJ", "close": "10.5", "volume": "3000000", "average_volume": "1000000"}
+            if endpoint == "vwap":
+                return {"code": 429, "message": "You have run out of API credits for the day. 801 used."}
+            return None
+
+        bot.twelvedata_request = vwap_credit_exhausted
+        bot.save_watchlist([{"symbol": "JJJ"}])
+        alerts, error = bot.scan_watchlist({"twelvedata_api_key": "x"})
+        ok = alerts is None and error is not None and bot.is_credit_exhausted(error)
+        failures += not ok
+        print(f"{'نجح ' if ok else 'فشل '} نفاد الأرصدة في مرحلة vwap: يوقف الفحص، ما يتجاهله كرمز بدون بيانات -> error={error!r}")
+
         # حساب وقف الخسارة نفسه: entry - (ATR × مضاعف)
         bot.twelvedata_request = fake_api(
             {"HHH": {"close": "10.5", "volume": "3000000", "average_volume": "1000000"}}, {"HHH": 10.0}, {"HHH": 2.0}
@@ -437,7 +455,7 @@ def main():
     print()
     total = (
         len(CASES) + len(SUNDAY_CASES) + len(FILTER_CASES) + len(cases) + 2
-        + len(CHAT_ID_CASES) + len(EXHAUSTED_CASES) + 3 + 3 + 3 + 1
+        + len(CHAT_ID_CASES) + len(EXHAUSTED_CASES) + 3 + 3 + 1 + 3 + 1
     )
     if failures:
         print(f"❌ فشل {failures} اختبار")
