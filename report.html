@@ -342,7 +342,7 @@
 <div class="page" lang="ar" dir="rtl">
 
   <header class="masthead">
-    <div class="eyebrow">STOCK-ANALYZER &middot; 2026-08-10</div>
+    <div class="eyebrow">STOCK-ANALYZER &middot; 2026-08-12</div>
     <h1>بوت تنبيهات الأسهم الأمريكية</h1>
     <p class="standfirst">
       بوت بايثون يشتغل على جوال أندرويد، يفحص السوق الأمريكي ويرسل تنبيه على
@@ -351,7 +351,8 @@
     <div class="stamp">
       <span class="pill pill--ok">المراحل ١–٤ خلصت</span>
       <span class="pill pill--ok">البوت شغّال ويستقبل أوامر</span>
-      <span class="pill pill--warn">باقي: بناء القائمة أول مرة</span>
+      <span class="pill pill--ok">يشتغل الاثنين (شراكة البوت مع صديقه)</span>
+      <span class="pill pill--warn">باقي: بناء القائمة الكاملة أول مرة نجحت</span>
     </div>
   </header>
 
@@ -391,9 +392,9 @@
         <div class="stage-n">٣</div>
         <div class="stage-body">
           <div class="stage-title">الفلترة الكاملة على قائمة الأسهم</div>
-          <div class="stage-note">القائمة تُبنى آلياً من السوق كله — مو يدوياً كما كانت الخطة</div>
+          <div class="stage-note">الآلية جاهزة ومُختبرة، لكن أول تشغيل كامل للسوق (18,400 سهم) انقطع مرتين قبل ما يخلص — القائمة الحالية 50 سهم بس (تفاصيل تحت)</div>
         </div>
-        <span class="pill pill--ok">مبنية ومُختبرة</span>
+        <span class="pill pill--warn">الآلية جاهزة، القائمة الكاملة لسه</span>
       </div>
 
       <div class="stage stage--done">
@@ -431,14 +432,21 @@
       الكود، فما يصير اختلاف بينهم.
     </p>
     <div class="cmds">
-      <div class="cmd"><code>/refresh</code><span>يبني قائمة المراقبة من السوق كله</span></div>
+      <div class="cmd"><code>/refresh</code><span>يبني قائمة المراقبة من السوق كله (شغل خلفي، ٥-٦ ساعات)</span></div>
+      <div class="cmd"><code>/restore</code><span>يرجّع قائمة المراقبة اللي كانت شغّالة قبل آخر /refresh</span></div>
       <div class="cmd"><code>/list</code><span>يعرض قائمة المراقبة</span></div>
       <div class="cmd"><code>/scan</code><span>فحص فوري الحين</span></div>
-      <div class="cmd"><code>/status</code><span>البوت شغّال؟ السوق مفتوح؟ آخر فحص؟</span></div>
+      <div class="cmd"><code>/status</code><span>البوت شغّال؟ السوق مفتوح؟ آخر فحص؟ أرصدة Twelve Data محظورة؟</span></div>
       <div class="cmd"><code>/price AAPL</code><span>سعر أي سهم أمريكي</span></div>
       <div class="cmd"><code>/mute &nbsp;/unmute</code><span>يوقف التنبيهات — البوت يضل شغّال</span></div>
       <div class="cmd"><code>/help</code><span>يعرض الأوامر</span></div>
     </div>
+    <p>
+      نفس التوكن يخدم <strong>شخصين</strong> الحين (صاحب المشروع وصديقه) —
+      التنبيهات وتقدم <span class="mono">/refresh</span> تصل للاثنين، وردود
+      الأوامر ترجع لصاحبها بس. لو راسل شخص ثالث غير مصرح له، البوت ما يرد
+      عليه، بس يبلّغ صاحب المشروع باسمه ورقمه عشان يضيفه بضغطة.
+    </p>
 
     <h3>يسمع ٢٤ ساعة، ويفحص وقت السوق بس</h3>
     <div class="table-wrap">
@@ -465,7 +473,7 @@
       المشكلة اللي <span class="mono">/status</span> موجود عشانها.
     </p>
 
-    <h3>مشكلتان انكشفتا قبل ما تنفجران</h3>
+    <h3>مشاكل حقيقية انكشفت وانحلّت</h3>
     <div class="table-wrap">
       <table>
         <thead><tr><th>المشكلة</th><th>الحل</th></tr></thead>
@@ -478,9 +486,25 @@
             <td>الجوال يقتل العمليات الطويلة &mdash; البوت يموت وأنت تنتظر تنبيهات ما بتجي</td>
             <td>حارس <span class="mono">run.sh</span> يعيد تشغيله. <strong>مُختبر بقتل حقيقي:</strong> مات، ورجع بعد ١٠ ثواني</td>
           </tr>
+          <tr>
+            <td>إعادة تشغيل البوت أثناء <span class="mono">/refresh</span> قتلت فحص وصل ١٥٠٠ من ١٨٬٤٠٠ سهم — ٢٥ سهم اتلقوا راحوا بلا رجعة</td>
+            <td>حفظ القائمة فور كل سهم جديد يدخلها، مو بانتظار نهاية الفحص الكامل</td>
+          </tr>
+          <tr>
+            <td>تشغيل اختبارات <span class="mono">test.py</span> على الجوال مسح قائمة حقيقية فيها ٣٣٥ سهم (٤٫٥ ساعة شغل)</td>
+            <td>الاختبارات تشتغل على ملفات مؤقتة معزولة تماماً، مع اختبار حارس يوقف البرنامج فوراً لو أي مسار أشار لمجلد المشروع الحقيقي</td>
+          </tr>
+          <tr>
+            <td>أرصدة Twelve Data اليومية (٨٠٠) نفدت، والفحص التلقائي استمر يحاول كل ١٥ دقيقة ويفشل — يصرف أرصدة سلبية بدون فايدة لين قفل السوق</td>
+            <td>يكتشف رسالة النفاد تحديداً، يوقف الفحص لين تجدد الأرصدة (منتصف الليل UTC)، وينبّه مرة وحدة بس &mdash; <strong>٢٠٢٦-٠٨-١٢</strong></td>
+          </tr>
         </tbody>
       </table>
     </div>
+    <p>
+      كل حادثة من هذي محفوظة بتفاصيلها الكاملة في <span class="mono">SESSIONS.md</span>،
+      ولكل واحدة اختبار جديد في <span class="mono">test.py</span> يتأكد إنها ما ترجع.
+    </p>
   </section>
 
   <section>
@@ -705,13 +729,17 @@
         <tbody>
           <tr><td>١٠٠ سهم</td><td class="verdict verdict--ok">أقل من دقيقتين</td></tr>
           <tr><td>١٬٠٠٠ سهم</td><td class="verdict verdict--ok">١٧ دقيقة</td></tr>
-          <tr><td>كل السوق الأمريكي (~١٠٬٠٠٠)</td><td class="verdict verdict--ok">~٢٫٨ ساعة</td></tr>
+          <tr><td>كل السوق الأمريكي (١٨٬٤٠٠ سهم فعلياً)</td><td class="verdict verdict--warn">~٥٫٦ ساعة</td></tr>
         </tbody>
       </table>
     </div>
     <p>
-      وهذا يشتغل <strong>مرة في اليوم بس</strong> — القيمة السوقية والفلوت ما
-      يتغيرون كل ساعة. يعني نقدر نمسح السوق كله كل ليلة ونطلّع القائمة.
+      <strong>الرقم الحقيقي مقاس فعلياً بتاريخ ٢٠٢٦-٠٨-١١</strong>، مو تقدير
+      نظري — كان موثّق خطأ كـ"ساعة ونص" قبل القياس، مبني على افتراض ~١٠٬٠٠٠
+      سهم بمعدل ٦٠ طلب/دقيقة. السوق فعلياً ~١٨٬٤٠٠ سهم، والكود القديم كان
+      يشتغل بمعدل ~٣٥ طلب/دقيقة بس رغم إن الحد ٦٠ (خطأ في حساب الانتظار
+      تصحّح لاحقاً). هذا يشتغل <strong>مرة في اليوم بس</strong> — القيمة
+      السوقية والفلوت ما يتغيرون كل ساعة.
     </p>
 
     <h3>ب &mdash; الفحص المتكرر عند Twelve Data: هذا هو القيد</h3>
@@ -813,9 +841,12 @@
   <section>
     <h2>الخطوة الجاية</h2>
     <p>
-      <strong>شغّل <span class="mono">/refresh</span></strong> عشان تنبني
-      قائمة المراقبة الحقيقية من السوق. ياخذ ساعة ونص، وتقدر تستخدم باقي
-      الأوامر خلاله.
+      <strong>أرصدة Twelve Data محظورة الحين لهذا اليوم</strong> — نفدت بسبب
+      حادثة الفحص المتكرر (أعلاه)، وترجع تلقائياً عند منتصف الليل UTC. أول
+      ما ترجع، شغّل <strong><span class="mono">/refresh</span></strong> من
+      جديد لبناء القائمة الكاملة — الفحص السابق ضاع بسبب انقطاعات قديمة،
+      لكن الإصلاحات الحالية (حفظ تدريجي + نسخة احتياطية) تحمي أي محاولة
+      جديدة من نفس المصير.
     </p>
     <p>
       بعدها راقب النتائج وعدّل <strong>نسبة قفزة الحجم</strong> — قيمتها
@@ -823,13 +854,18 @@
       نفسها تقول تُحدد بالتجربة. لو التنبيهات كثيرة نرفعها، ولو نادرة ننزلها.
     </p>
     <p>
+      صاحب المشروع يطلب من صديقه يراسل البوت مرة عشان آلية "تبليغ الغريب"
+      تكشف رقمه تلقائياً ويضيفه.
+    </p>
+    <p>
       <strong>المرحلة ٥ (بوت إدارة المخاطر) تحتاج حساب تداول فعلي</strong> —
-      قرارها لك.
+      قرارها لك. مؤجّلان أيضاً بطلب صريح: أمر <span class="mono">/setlist</span>
+      وأهداف الربح — الكود القديم محفوظ في تاريخ git، ينتظر إشارتك.
     </p>
   </section>
 
   <footer>
-    <span>آخر تحديث: ٢٠٢٦-٠٨-١٠</span>
+    <span>آخر تحديث: ٢٠٢٦-٠٨-١٢</span>
     <span>البوت: <span class="mono">@Stock7oot_bot</span></span>
     <span>الريبو: <span class="mono">alpha2xyz/Stock-analyzer</span></span>
   </footer>
