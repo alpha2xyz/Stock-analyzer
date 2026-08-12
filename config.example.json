@@ -11,5 +11,6 @@
   "min_float_shares": 500000,
   "volume_spike_ratio": 2.0,
   "scan_interval_minutes": 15,
-  "atr_multiplier": 1.75
+  "atr_multiplier": 1.75,
+  "max_watchlist_size": 30
 }
