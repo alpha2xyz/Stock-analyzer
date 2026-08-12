@@ -411,15 +411,16 @@ def main():
     bot.time.sleep = lambda seconds: None
     bot.us_common_stocks = lambda api_key, config=None: ["THIN"]
     bot.finnhub_request = lambda api_key, endpoint, params, fatal=False: (
-        {"metric": {"10DayAverageTradingVolume": 0.25}}  # 250 ألف — تحت حد 300 ألف
+        {"metric": {"10DayAverageTradingVolume": 0.03}}  # 30 ألف سهم/يوم
         if endpoint == "stock/metric"
         else {"marketCapitalization": 45.0, "floatingShare": 0.6, "name": "Thin"}
     )
     try:
-        thin, _ = bot.build_watchlist({"finnhub_api_key": "k"})
+        # الحد يُمرَّر صراحة عشان الاختبار ما ينكسر لو تغيّر الافتراضي لاحقاً
+        thin, _ = bot.build_watchlist({"finnhub_api_key": "k", "min_avg_volume_shares": 50_000})
         ok = thin == []
         failures += not ok
-        print(f"{'نجح ' if ok else 'فشل '} سيولة 250 ألف تحت حد 300 ألف → السهم يسقط -> {thin}")
+        print(f"{'نجح ' if ok else 'فشل '} سيولة 30 ألف تحت حد 50 ألف → السهم يسقط -> {thin}")
     finally:
         bot.finnhub_request = original_finnhub_v
         bot.us_common_stocks = original_us_v
