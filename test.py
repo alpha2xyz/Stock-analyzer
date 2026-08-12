@@ -299,6 +299,35 @@ def main():
         print(f"{status} allowed_chat_ids: {note:40s} -> {got}")
 
     print()
+    # حادثة 2026-08-12: /list كان يقصّ القائمة عند 40 سهم ويكتب "و X غيرهم"
+    # بدل ما يعرض الباقي فعلياً — خفى بيانات بصمت. الحل: chunk_message()
+    # تقسّم أي رسالة طويلة لعدة رسائل تيليجرام، ما تخفي شي.
+    long_text = "\n".join(f"سطر رقم {i}" for i in range(1, 21))
+
+    small_limit_chunks = bot.chunk_message(long_text, limit=30)
+    ok = (
+        len(small_limit_chunks) > 1
+        and all(len(c) <= 30 for c in small_limit_chunks)
+        and "\n".join(small_limit_chunks) == long_text
+    )
+    failures += not ok
+    print(f"{'نجح ' if ok else 'فشل '} chunk_message: يقسّم نص طويل بدون ما يفقد أي سطر -> {len(small_limit_chunks)} جزء")
+
+    large_limit_chunks = bot.chunk_message(long_text, limit=10000)
+    ok = large_limit_chunks == [long_text]
+    failures += not ok
+    print(f"{'نجح ' if ok else 'فشل '} chunk_message: نص قصير تحت الحد يرجع بجزء واحد بدون تغيير")
+
+    many_stocks = [{"symbol": f"SYM{i}", "market_cap_musd": 45.0, "float_shares": 600000} for i in range(45)]
+    bot.save_watchlist(many_stocks)
+    list_text = bot.cmd_list({})
+    ok = "غيرهم" not in list_text and all(f"SYM{i}" in list_text for i in range(45))
+    failures += not ok
+    print(f"{'نجح ' if ok else 'فشل '} cmd_list: قائمة ٤٥ سهم تظهر كاملة، ما تُقصّ عند ٤٠")
+    if os.path.exists(bot.WATCHLIST_PATH):
+        os.remove(bot.WATCHLIST_PATH)
+
+    print()
     for message, expected, note in EXHAUSTED_CASES:
         got = bot.is_credit_exhausted(message)
         ok = got == expected
@@ -455,7 +484,7 @@ def main():
     print()
     total = (
         len(CASES) + len(SUNDAY_CASES) + len(FILTER_CASES) + len(cases) + 2
-        + len(CHAT_ID_CASES) + len(EXHAUSTED_CASES) + 3 + 3 + 1 + 3 + 1
+        + len(CHAT_ID_CASES) + 3 + len(EXHAUSTED_CASES) + 3 + 3 + 1 + 3 + 1
     )
     if failures:
         print(f"❌ فشل {failures} اختبار")

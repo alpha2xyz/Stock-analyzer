@@ -149,6 +149,38 @@ def send_message(token, chat_id, text):
     )
 
 
+TELEGRAM_MAX_MESSAGE_LENGTH = 4096  # حد تيليجرام الفعلي لطول الرسالة الواحدة
+
+
+def chunk_message(text, limit=TELEGRAM_MAX_MESSAGE_LENGTH):
+    """يقسّم رسالة طويلة لعدة أجزاء تحت حد تيليجرام، بدون ما يقطع سطر من نصه."""
+    if len(text) <= limit:
+        return [text]
+
+    chunks = []
+    current = ""
+    for line in text.split("\n"):
+        candidate = f"{current}\n{line}" if current else line
+        if len(candidate) > limit and current:
+            chunks.append(current)
+            current = line
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def send_message_chunked(token, chat_id, text):
+    """زي send_message، بس يقسّم لعدة رسائل لو تجاوز حد تيليجرام — ما نخفي بيانات أبداً.
+
+    حادثة 2026-08-12: /list كان يقصّ القائمة عند 40 سهم ويكتب "و X غيرهم"
+    بدل ما يعرض الباقي فعلياً. هذي دالة عامة تحل المشكلة لكل أمر، مو /list بس.
+    """
+    for chunk in chunk_message(text):
+        send_message(token, chat_id, chunk)
+
+
 def print_chat_ids(token):
     """يجيب آخر الرسائل الواصلة للبوت ويطبع منها رقم المحادثة."""
     result = telegram_request(token, "getUpdates")
@@ -654,14 +686,12 @@ def cmd_list(config):
         return "قائمة المراقبة فاضية.\nشغّل /refresh عشان أبنيها من السوق."
 
     lines = [f"📋 قائمة المراقبة — {LTR}{len(watchlist)} سهم", ""]
-    for item in watchlist[:40]:
+    for item in watchlist:
         lines.append(
             f"{LTR}{item['symbol']} — {LTR}{item['market_cap_musd']}M — فلوت {LTR}{item['float_shares']:,}"
         )
-    if len(watchlist) > 40:
-        lines.append(f"... و {LTR}{len(watchlist) - 40} غيرهم")
 
-    return "\n".join(lines)
+    return "\n".join(lines)  # send_message_chunked() يقسّمها لعدة رسائل لو طولت، ما نقصّها هنا
 
 
 def cmd_status(config, state):
@@ -1002,7 +1032,7 @@ def run_bot(config):
             reply = handle_command(config, state, text)
             if reply:
                 print(f"أمر من {chat_id}: {text.strip()}")
-                send_message(token, chat_id, reply)
+                send_message_chunked(token, chat_id, reply)
 
 
 def require_chat_id(config):
@@ -1029,7 +1059,7 @@ def allowed_chat_ids(config):
 
 def broadcast(token, chat_ids, text):
     for chat_id in chat_ids:
-        send_message(token, chat_id, text)
+        send_message_chunked(token, chat_id, text)
 
 
 def main():
