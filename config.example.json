@@ -6,13 +6,16 @@
 
   "_ملاحظة": "telegram_chat_ids (قائمة) تضيف أكثر من محادثة على نفس البوت — لو موجودة تستخدم بدل telegram_chat_id. مثال: [\"111\", \"222\"]",
 
-  "min_market_cap_musd": 40,
+  "min_market_cap_musd": 0.5,
   "max_market_cap_musd": 60,
+  "min_price": 1.0,
   "min_float_shares": 500000,
   "max_float_shares": 15000000,
   "min_avg_volume_shares": 50000,
   "min_change_percent": 5.0,
   "allowed_exchanges": ["XNAS", "XNYS", "XASE"],
+  "indicator_interval": "5min",
+  "ema_periods": [5, 10, 20],
   "volume_spike_ratio": 2.0,
   "scan_interval_minutes": 15,
   "atr_multiplier": 1.75,

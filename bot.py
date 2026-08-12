@@ -357,8 +357,12 @@ def publish_command_menu(token):
 
 # شروط الفلترة. قابلة للتعديل من config.json.
 DEFAULTS = {
-    "min_market_cap_musd": 40,      # مليون دولار
+    "min_market_cap_musd": 0.5,     # قراره 2026-08-12 — وُسّع من 40 لـ 500 ألف دولار
     "max_market_cap_musd": 60,      # مليون دولار
+    # حد أدنى للسعر: بعد ما نزل الحد الأدنى للقيمة السوقية لـ 500 ألف، ضاعت
+    # الحماية الضمنية اللي كانت تجي من (قيمة سوقية 40 مليون ÷ فلوت 15 مليون
+    # = سعر ~$2.67). بدونه ترجع أسهم البنسات.
+    "min_price": 1.0,
     "min_float_shares": 500_000,
     "max_float_shares": 15_000_000, # قراره 2026-08-12 — فلوت صغير = حركة أوضح
     "min_avg_volume_shares": 50_000,   # مقاس على بيانات حقيقية 2026-08-12 — 300 ألف كانت ترجّع قائمة فاضية
@@ -366,6 +370,10 @@ DEFAULTS = {
     # بورصات حقيقية بس. OOTC (أسهم OTC) مستبعدة عمداً: 73% من السوق، وأغلبها
     # أسهم أجنبية بأجزاء من السنت ما تصلح لاستراتيجية قفزة حجم خلال اليوم.
     "allowed_exchanges": ["XNAS", "XNYS", "XASE"],  # ناسداك، نيويورك، نيويورك أمريكان
+    # الشرط الرابع الموسّع (قراره 2026-08-12): مو VWAP لحاله، بل حزمة مؤشرات
+    # على فريم 5 دقائق — نفس فريم VWAP، متسق مع استراتيجية قفزة الحجم اليومية.
+    "indicator_interval": "5min",
+    "ema_periods": [5, 10, 20],     # السعر لازم يكون فوق الثلاثة
     "volume_spike_ratio": 2.0,      # تجريبي — يتعدّل بعد ما نشوف نتائج حقيقية
     "scan_interval_minutes": 15,
     "atr_multiplier": 1.75,         # مضاعف وقف الخسارة، يبدأ بين 1.5 و 2 حسب المواصفات
@@ -648,7 +656,7 @@ def find_movers(config, state, watchlist):
         except (TypeError, ValueError):
             continue
 
-        if price > 0 and change >= threshold:
+        if price >= setting(config, "min_price") and change >= threshold:
             movers.append({"symbol": symbol, "change_percent": change})
 
     movers.sort(key=lambda m: m["change_percent"], reverse=True)
@@ -671,6 +679,141 @@ def twelvedata_request(api_key, endpoint, params):
             return None
     except (urllib.error.URLError, TimeoutError, OSError):
         return None
+
+
+def td_indicator(config, state, api_key, endpoint, params):
+    """طلب مؤشر من Twelve Data مع احتساب الرصيد وفحص السقف اليومي.
+
+    يرجّع (القيم، خطأ_قاتل). الخطأ القاتل يوقف الفحص كله (نفاد أرصدة أو
+    بلوغ السقف). أي فشل آخر يرجّع (None, None) — يعني "السهم ما عدّى"، مو
+    "الفحص انهار".
+    """
+    if credits_used_today(state) + 1 > setting(config, "daily_credit_budget"):
+        return None, f"وصلت سقف الميزانية اليومي ({setting(config, 'daily_credit_budget')} رصيد)"
+
+    data = twelvedata_request(api_key, endpoint, params)
+    record_credits(state, 1)
+    time.sleep(8)  # حد 8 أرصدة في الدقيقة
+
+    if not data:
+        return None, None
+    if data.get("code"):
+        message = f"Twelve Data: {data.get('message', 'خطأ غير معروف')}"
+        return None, message if is_credit_exhausted(message) else None
+
+    return data.get("values") or [], None
+
+
+def supertrend_crossed_up(st_values, ts_values):
+    """تقاطع SuperTrend صاعد خلال آخر شمعتين (قراره 2026-08-12).
+
+    المطلوب: السعر **فوق** SuperTrend الحين، **وكان تحته** في إحدى الشمعتين
+    السابقتين — يعني التقاطع صار للتو، مو من زمان.
+
+    ⚠️ القيم تجي من Twelve Data **الأحدث أولاً** — مؤكد باختبار حقيقي
+    2026-08-12. لو انقلب الترتيب يوماً، منطق التقاطع كله ينعكس.
+    """
+    if not st_values or not ts_values:
+        return False, None
+
+    supertrend = {}
+    for v in st_values:
+        try:
+            supertrend[v["datetime"]] = float(v["supertrend"])
+        except (KeyError, TypeError, ValueError):
+            continue
+
+    closes = {}
+    for v in ts_values:
+        try:
+            closes[v["datetime"]] = float(v["close"])
+        except (KeyError, TypeError, ValueError):
+            continue
+
+    # نمشي بترتيب رد supertrend نفسه (الأحدث أولاً)، وناخذ اللي له سعر مطابق
+    times = [v["datetime"] for v in st_values if v.get("datetime") in closes]
+    if len(times) < 2:
+        return False, None
+
+    above = [closes[t] > supertrend[t] for t in times]
+
+    if not above[0]:
+        return False, None  # مو فوقه الحين أصلاً
+
+    # كان تحته في إحدى الشمعتين السابقتين → التقاطع حديث
+    if any(not a for a in above[1:3]):
+        return True, supertrend[times[0]]
+
+    return False, None
+
+
+def passes_indicators(config, state, api_key, symbol, price):
+    """الشرط الرابع الموسّع: فوق EMA5/10/20، وهيستوجرام MACD موجب، وتقاطع
+    SuperTrend صاعد حديث.
+
+    **الترتيب مقصود — يوقف عند أول فشل ويوفّر باقي الأرصدة.** MACD أول لأنه
+    رصيد واحد ويرفض قرابة النصف، وSuperTrend آخر شي لأنه يكلف رصيدين.
+
+    يرجّع (نجح؟، التفاصيل، خطأ_قاتل).
+    """
+    interval = setting(config, "indicator_interval")
+    details = {}
+
+    # 1) هيستوجرام MACD موجب
+    values, error = td_indicator(
+        config, state, api_key, "macd", {"symbol": symbol, "interval": interval, "outputsize": "1"}
+    )
+    if error:
+        return False, details, error
+    if not values:
+        return False, details, None
+    try:
+        histogram = float(values[0]["macd_hist"])
+    except (KeyError, IndexError, TypeError, ValueError):
+        return False, details, None
+    if histogram <= 0:
+        return False, details, None
+    details["macd_hist"] = histogram
+
+    # 2) السعر فوق كل المتوسطات
+    for period in setting(config, "ema_periods"):
+        values, error = td_indicator(
+            config,
+            state,
+            api_key,
+            "ema",
+            {"symbol": symbol, "interval": interval, "time_period": str(period), "outputsize": "1"},
+        )
+        if error:
+            return False, details, error
+        if not values:
+            return False, details, None
+        try:
+            ema = float(values[0]["ema"])
+        except (KeyError, IndexError, TypeError, ValueError):
+            return False, details, None
+        if price <= ema:
+            return False, details, None
+        details[f"ema{period}"] = ema
+
+    # 3) تقاطع SuperTrend صاعد حديث — يحتاج المؤشر والأسعار مع بعض
+    st_values, error = td_indicator(
+        config, state, api_key, "supertrend", {"symbol": symbol, "interval": interval, "outputsize": "3"}
+    )
+    if error:
+        return False, details, error
+    ts_values, error = td_indicator(
+        config, state, api_key, "time_series", {"symbol": symbol, "interval": interval, "outputsize": "3"}
+    )
+    if error:
+        return False, details, error
+
+    crossed, supertrend_value = supertrend_crossed_up(st_values, ts_values)
+    if not crossed:
+        return False, details, None
+
+    details["supertrend"] = supertrend_value
+    return True, details, None
 
 
 def scan_watchlist(config, state=None):
@@ -762,7 +905,9 @@ def scan_watchlist(config, state=None):
             break
 
         vwap_data = twelvedata_request(
-            api_key, "vwap", {"symbol": candidate["symbol"], "interval": "5min", "outputsize": "1"}
+            api_key,
+            "vwap",
+            {"symbol": candidate["symbol"], "interval": setting(config, "indicator_interval"), "outputsize": "1"},
         )
         record_credits(state, 1)
         time.sleep(8)
@@ -788,10 +933,25 @@ def scan_watchlist(config, state=None):
             candidate["vwap"] = vwap
             above_vwap.append(candidate)
 
-    # وقف الخسارة بـ ATR — للأسهم اللي حققت الشروط الأربعة بس (نادرة جداً،
+    # الشرط الرابع الموسّع: EMA + MACD + SuperTrend — للي عدّى VWAP بس
+    confirmed = []
+    for candidate in above_vwap:
+        passed, details, error = passes_indicators(
+            config, state, api_key, candidate["symbol"], candidate["price"]
+        )
+        if error:
+            if is_credit_exhausted(error):
+                return None, error
+            print(f"وقفت مرحلة المؤشرات: {error}")
+            break
+        if passed:
+            candidate.update(details)
+            confirmed.append(candidate)
+
+    # وقف الخسارة بـ ATR — للأسهم اللي حققت كل الشروط بس (نادرة جداً،
     # عشان كذا رصيد إضافي لكل واحد منهم ما يكلّف شي محسوس)
     alerts = []
-    for candidate in above_vwap:
+    for candidate in confirmed:
         stop = compute_stop_loss(config, api_key, candidate["symbol"], candidate["price"])
         record_credits(state, 1)
         time.sleep(8)
@@ -847,7 +1007,6 @@ def format_alert(candidate):
 
     lines += [
         "",
-        f"VWAP: {LTR}{round(candidate['vwap'], 2)}",
         f"الحجم: {LTR}{int(candidate['volume']):,} سهم",
         f"المعدل: {LTR}{int(candidate['average_volume']):,} سهم",
         f"القفزة: {LTR}{round(ratio, 1)}× المعدل",
@@ -855,6 +1014,19 @@ def format_alert(candidate):
 
     if candidate.get("change_percent") is not None:
         lines.append(f"التغير اليوم: {LTR}{round(candidate['change_percent'], 1)}%")
+
+    lines += ["", "✅ الشروط المتحققة:", f"فوق VWAP: {LTR}{round(candidate['vwap'], 2)}"]
+
+    for period in (5, 10, 20):
+        ema = candidate.get(f"ema{period}")
+        if ema is not None:
+            lines.append(f"فوق EMA{LTR}{period}: {LTR}{round(ema, 2)}")
+
+    if candidate.get("macd_hist") is not None:
+        lines.append(f"هيستوجرام MACD موجب: {LTR}{round(candidate['macd_hist'], 4)}")
+
+    if candidate.get("supertrend") is not None:
+        lines.append(f"تقاطع SuperTrend صاعد: {LTR}{round(candidate['supertrend'], 2)}")
 
     lines += [
         "",

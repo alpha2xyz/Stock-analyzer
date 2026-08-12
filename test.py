@@ -75,7 +75,10 @@ FILTER_CASES = [
     ({"marketCapitalization": 45.0, "floatingShare": 0.6}, True, "45 مليون + فلوت 600 ألف"),
     ({"marketCapitalization": 40.0, "floatingShare": 0.6}, True, "40 مليون بالضبط — الحد الأدنى"),
     ({"marketCapitalization": 60.0, "floatingShare": 0.6}, True, "60 مليون بالضبط — الحد الأعلى"),
-    ({"marketCapitalization": 39.9, "floatingShare": 0.6}, False, "أقل من 40 مليون"),
+    # الحد الأدنى نزل من 40 مليون لـ 500 ألف (قراره 2026-08-12)
+    ({"marketCapitalization": 39.9, "floatingShare": 0.6}, True, "39.9 مليون — كان يسقط، صار يعدّي"),
+    ({"marketCapitalization": 0.5, "floatingShare": 0.6}, True, "500 ألف بالضبط — الحد الأدنى الجديد"),
+    ({"marketCapitalization": 0.4, "floatingShare": 0.6}, False, "400 ألف — تحت الحد الأدنى"),
     ({"marketCapitalization": 60.1, "floatingShare": 0.6}, False, "أكثر من 60 مليون"),
     ({"marketCapitalization": 45.0, "floatingShare": 0.4}, False, "فلوت 400 ألف — تحت الحد"),
     ({"marketCapitalization": 45.0, "floatingShare": 0.5}, False, "فلوت 500 ألف بالضبط — لازم يكون فوقها"),
@@ -110,6 +113,17 @@ def fake_api(quotes, vwaps, atrs=None):
             if symbol not in atrs:
                 return {"code": 500, "message": "atr unavailable"}
             return {"values": [{"atr": str(atrs[symbol])}]}
+        # الشرط الرابع الموسّع (2026-08-12): قيم "كلها متحققة" افتراضياً عشان
+        # هذي الاختبارات تبقى تختبر منطق الحجم و VWAP و ATR، مو المؤشرات
+        if endpoint == "macd":
+            return {"values": [{"macd_hist": "0.5"}]}
+        if endpoint == "ema":
+            return {"values": [{"ema": "1.0"}]}  # أقل من أي سعر في الاختبارات
+        if endpoint == "supertrend":
+            return {"values": [{"datetime": f"t{i}", "supertrend": "8.0"} for i in range(3)]}
+        if endpoint == "time_series":
+            # فوقه الحين (10)، وكان تحته قبل (7) → تقاطع صاعد حديث
+            return {"values": [{"datetime": f"t{i}", "close": c} for i, c in enumerate(["10.0", "7.0", "7.0"])]}
         return None
 
     return handler
@@ -481,6 +495,104 @@ def main():
             os.remove(bot.WATCHLIST_PATH)
 
     print()
+    # ===== الشرط الرابع الموسّع (قراره 2026-08-12) =====
+    # تقاطع SuperTrend: القيم تجي **الأحدث أولاً** (مؤكد باختبار حقيقي).
+    # المطلوب: السعر فوقه الحين، وكان تحته في إحدى الشمعتين السابقتين.
+    def st_case(closes, sts):
+        """closes/sts بالترتيب: الأحدث أولاً"""
+        times = [f"t{i}" for i in range(len(closes))]
+        return (
+            [{"datetime": t, "supertrend": str(s)} for t, s in zip(times, sts)],
+            [{"datetime": t, "close": str(c)} for t, c in zip(times, closes)],
+        )
+
+    ST_CASES = [
+        (([11, 9, 9], [10, 10, 10]), True, "تحت ثم فوق للتو → تقاطع"),
+        (([11, 11, 9], [10, 10, 10]), True, "التقاطع صار قبل شمعة → لسه يُحتسب"),
+        (([11, 11, 11], [10, 10, 10]), False, "فوقه من زمان → مو تقاطع حديث"),
+        (([9, 9, 9], [10, 10, 10]), False, "تحته الحين → مرفوض"),
+        (([9, 11, 11], [10, 10, 10]), False, "نزل تحته → تقاطع هابط، مرفوض"),
+    ]
+    for (closes, sts), expected, note in ST_CASES:
+        st_vals, ts_vals = st_case(closes, sts)
+        got, _ = bot.supertrend_crossed_up(st_vals, ts_vals)
+        ok = got == expected
+        failures += not ok
+        print(f"{'نجح ' if ok else 'فشل '} SuperTrend: {note:42s} -> {got}")
+
+    # حزمة المؤشرات: كل فحص يوقف عند أول فشل ويوفّر باقي الأرصدة
+    def indicator_api(macd_hist=1.0, emas=None, st=None, closes=None, calls=None):
+        emas = emas if emas is not None else {5: 9.0, 10: 8.5, 20: 8.0}
+
+        def handler(api_key, endpoint, params):
+            if calls is not None:
+                calls.append(endpoint)
+            if endpoint == "macd":
+                return {"values": [{"macd_hist": str(macd_hist)}]}
+            if endpoint == "ema":
+                return {"values": [{"ema": str(emas[int(params["time_period"])])}]}
+            if endpoint == "supertrend":
+                vals = st if st is not None else [8.0, 8.0, 8.0]
+                return {"values": [{"datetime": f"t{i}", "supertrend": str(v)} for i, v in enumerate(vals)]}
+            if endpoint == "time_series":
+                vals = closes if closes is not None else [10.0, 7.0, 7.0]
+                return {"values": [{"datetime": f"t{i}", "close": str(v)} for i, v in enumerate(vals)]}
+            return None
+
+        return handler
+
+    original_td_i = bot.twelvedata_request
+    original_sleep_i = bot.time.sleep
+    bot.time.sleep = lambda seconds: None
+    try:
+        calls = []
+        bot.twelvedata_request = indicator_api(calls=calls)
+        passed, details, err = bot.passes_indicators({}, {}, "k", "SYM", 10.0)
+        ok = passed and err is None and details.get("macd_hist") == 1.0 and "ema20" in details
+        failures += not ok
+        print(f"{'نجح ' if ok else 'فشل '} كل المؤشرات تحققت → السهم يعدّي -> {sorted(details)}")
+
+        # MACD سالب يوقف كل شي فوراً — رصيد واحد بس، ما نطلب EMA ولا SuperTrend
+        calls = []
+        bot.twelvedata_request = indicator_api(macd_hist=-0.5, calls=calls)
+        passed, _, _ = bot.passes_indicators({}, {}, "k", "SYM", 10.0)
+        ok = not passed and calls == ["macd"]
+        failures += not ok
+        print(f"{'نجح ' if ok else 'فشل '} هيستوجرام سالب يوقف فوراً (رصيد واحد) -> نداءات={calls}")
+
+        # السعر تحت EMA20 → يسقط بعد ثلاث EMA، وما نطلب SuperTrend
+        calls = []
+        bot.twelvedata_request = indicator_api(emas={5: 9.0, 10: 8.5, 20: 11.0}, calls=calls)
+        passed, _, _ = bot.passes_indicators({}, {}, "k", "SYM", 10.0)
+        ok = not passed and "supertrend" not in calls
+        failures += not ok
+        print(f"{'نجح ' if ok else 'فشل '} تحت EMA20 يسقط قبل ما نصرف على SuperTrend -> نداءات={calls}")
+
+        # كل شي سليم لكن ما في تقاطع SuperTrend حديث
+        bot.twelvedata_request = indicator_api(st=[8.0, 8.0, 8.0], closes=[10.0, 10.0, 10.0])
+        passed, _, _ = bot.passes_indicators({}, {}, "k", "SYM", 10.0)
+        ok = not passed
+        failures += not ok
+        print(f"{'نجح ' if ok else 'فشل '} بدون تقاطع SuperTrend حديث → ما ينبّه -> {passed}")
+    finally:
+        bot.twelvedata_request = original_td_i
+        bot.time.sleep = original_sleep_i
+
+    # حد السعر الأدنى — يُطبّق مجاناً في المرحلة ب
+    original_finnhub_p = bot.finnhub_request
+    bot.finnhub_request = lambda api_key, endpoint, params, fatal=True: {
+        "c": 0.40 if params["symbol"] == "PENNY" else 8.0, "dp": 20.0
+    }
+    try:
+        movers, _ = bot.find_movers({"finnhub_api_key": "k"}, {}, [{"symbol": "PENNY"}, {"symbol": "REAL"}])
+        got = [m["symbol"] for m in movers]
+        ok = got == ["REAL"]
+        failures += not ok
+        print(f"{'نجح ' if ok else 'فشل '} سهم بـ$0.40 يسقط عند حد $1 رغم تحركه 20% -> {got}")
+    finally:
+        bot.finnhub_request = original_finnhub_p
+
+    print()
     # ===== سقف الميزانية اليومي =====
     now = datetime.now(timezone.utc)
     today = now.strftime("%Y-%m-%d")
@@ -737,6 +849,7 @@ def main():
         + 3 + 1                            # المرحلة ب: الغربلة والتهدئة، وعدم صرف رصيد
         + 2 + 1                            # عدّاد الأرصدة وتصفيره، وسقف الميزانية
         + 1                                # منظّم معدّل Finnhub
+        + len(ST_CASES) + 4 + 1            # الشرط الرابع الموسّع وحد السعر
     )
     if failures:
         print(f"❌ فشل {failures} اختبار")
