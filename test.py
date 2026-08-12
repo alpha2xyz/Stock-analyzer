@@ -13,7 +13,7 @@ import importlib.util
 import os
 import sys
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 spec = importlib.util.spec_from_file_location(
     "bot", os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot.py")
@@ -83,6 +83,10 @@ FILTER_CASES = [
     ({"marketCapitalization": None, "floatingShare": 0.6}, False, "قيمة سوقية ناقصة"),
     ({"marketCapitalization": 45.0, "floatingShare": None}, False, "فلوت ناقص"),
     ({}, False, "بروفايل فاضي"),
+    # الحد الأقصى للفلوت (قراره 2026-08-12) — 15 مليون سهم
+    ({"marketCapitalization": 45.0, "floatingShare": 15.0}, True, "فلوت 15 مليون بالضبط — الحد الأعلى"),
+    ({"marketCapitalization": 45.0, "floatingShare": 15.1}, False, "فلوت 15.1 مليون — فوق الحد"),
+    ({"marketCapitalization": 57.3, "floatingShare": 2468.94}, False, "AABB الحقيقي — فلوت 2.4 مليار، لازم يسقط الحين"),
 ]
 
 
@@ -109,6 +113,28 @@ def fake_api(quotes, vwaps, atrs=None):
         return None
 
     return handler
+
+
+def fake_finnhub_quote(change_percent=10.0, price=10.0, calls=None):
+    """يبدّل نداءات Finnhub في المرحلة ب (الغربلة المجانية).
+
+    أُضيفت 2026-08-12 لما دخلت المرحلة ب قبل Twelve Data: اختبارات الفحص
+    القديمة كانت تبدّل Twelve Data بس، فصارت الأسهم تسقط في الغربلة قبل ما
+    توصل المنطق اللي تختبره. الافتراضي هنا "متحرك بقوة" عشان تعدّي الغربلة
+    وتوصل نفس المنطق الأصلي.
+    """
+    def handler(api_key, endpoint, params, fatal=True):
+        if calls is not None:
+            calls.append(params.get("symbol"))
+        if endpoint == "quote":
+            return {"c": price, "dp": change_percent}
+        return {"_error": "unexpected endpoint in test"}
+
+    return handler
+
+
+# إعداد أساسي لاختبارات الفحص — لازم يحتوي مفتاح Finnhub بعد إضافة المرحلة ب
+SCAN_CONFIG = {"twelvedata_api_key": "x", "finnhub_api_key": "f"}
 
 
 def scan_cases():
@@ -233,12 +259,16 @@ def main():
     cases = scan_cases()
     original_request = bot.twelvedata_request
     original_sleep = bot.time.sleep
+    original_finnhub_scan = bot.finnhub_request
     bot.time.sleep = lambda seconds: None  # ما ننتظر حدود المعدل في الاختبار
+    # كل رموز هذي الاختبارات تعدّي الغربلة (المرحلة ب) عشان نختبر منطق
+    # Twelve Data نفسه، مو الغربلة
+    bot.finnhub_request = fake_finnhub_quote(change_percent=10.0)
     try:
         for note, quotes, vwaps, atrs, expected in cases:
             bot.twelvedata_request = fake_api(quotes, vwaps, atrs)
             bot.save_watchlist([{"symbol": s} for s in quotes])
-            alerts, error = bot.scan_watchlist({"twelvedata_api_key": "x"})
+            alerts, error = bot.scan_watchlist(SCAN_CONFIG)
             got = sorted(a["symbol"] for a in (alerts or []))
             ok = error is None and got == sorted(expected)
             failures += not ok
@@ -250,7 +280,7 @@ def main():
             {"GGG": {"close": "10.5", "volume": "3000000", "average_volume": "1000000"}}, {"GGG": 10.0}, {}
         )
         bot.save_watchlist([{"symbol": "GGG"}])
-        alerts, _ = bot.scan_watchlist({"twelvedata_api_key": "x"})
+        alerts, _ = bot.scan_watchlist(SCAN_CONFIG)
         ok = len(alerts) == 1 and alerts[0]["stop_loss"] is None
         failures += not ok
         print(f"{'نجح ' if ok else 'فشل '} فشل ATR: التنبيه يحمل stop_loss=None، ما يسقط بالكامل")
@@ -259,7 +289,7 @@ def main():
         # بنفس معاملة نفاد الأرصدة في مرحلة quote، مو يتجاهله كأي رمز عادي
         # بدون بيانات vwap. لو تجاهلناه، start_scan() ما يعرف إن الأرصدة
         # خلصت، والحظر ما ينضبط.
-        def vwap_credit_exhausted(api_key, endpoint, params):
+        def vwap_credit_exhausted(api_key, endpoint, params):  # noqa: ANN001
             if endpoint == "quote":
                 return {"symbol": "JJJ", "close": "10.5", "volume": "3000000", "average_volume": "1000000"}
             if endpoint == "vwap":
@@ -268,7 +298,7 @@ def main():
 
         bot.twelvedata_request = vwap_credit_exhausted
         bot.save_watchlist([{"symbol": "JJJ"}])
-        alerts, error = bot.scan_watchlist({"twelvedata_api_key": "x"})
+        alerts, error = bot.scan_watchlist(SCAN_CONFIG)
         ok = alerts is None and error is not None and bot.is_credit_exhausted(error)
         failures += not ok
         print(f"{'نجح ' if ok else 'فشل '} نفاد الأرصدة في مرحلة vwap: يوقف الفحص، ما يتجاهله كرمز بدون بيانات -> error={error!r}")
@@ -278,7 +308,7 @@ def main():
             {"HHH": {"close": "10.5", "volume": "3000000", "average_volume": "1000000"}}, {"HHH": 10.0}, {"HHH": 2.0}
         )
         bot.save_watchlist([{"symbol": "HHH"}])
-        alerts, _ = bot.scan_watchlist({"twelvedata_api_key": "x", "atr_multiplier": 1.5})
+        alerts, _ = bot.scan_watchlist(dict(SCAN_CONFIG, atr_multiplier=1.5))
         expected_stop = 10.5 - (2.0 * 1.5)  # = 7.5
         got_stop = alerts[0]["stop_loss"] if alerts else None
         ok = got_stop is not None and abs(got_stop - expected_stop) < 0.001
@@ -286,6 +316,7 @@ def main():
         print(f"{'نجح ' if ok else 'فشل '} حساب وقف الخسارة: entry=10.5 ATR=2.0 x1.5 -> {got_stop} (متوقع {expected_stop})")
     finally:
         bot.twelvedata_request = original_request
+        bot.finnhub_request = original_finnhub_scan
         bot.time.sleep = original_sleep
         if os.path.exists(bot.WATCHLIST_PATH):
             os.remove(bot.WATCHLIST_PATH)
@@ -297,6 +328,217 @@ def main():
         failures += not ok
         status = "نجح  " if ok else "فشل  "
         print(f"{status} allowed_chat_ids: {note:40s} -> {got}")
+
+    print()
+    # ===== المرحلة أ: فلتر البورصة + السيولة (قراره 2026-08-12) =====
+    # 73% من "الأسهم العادية" عند Finnhub هي OOTC (أسهم OTC) — 13,483 من
+    # 18,434 — وأغلبها أجنبية بأجزاء من السنت. استبعادها مجاني (حقل mic يجي
+    # مع نفس الرد) ويقصّر /refresh من ~5.6 ساعة إلى ~1.5.
+    original_finnhub_ex = bot.finnhub_request
+    symbol_rows = [
+        {"symbol": "NAS1", "type": "Common Stock", "mic": "XNAS"},
+        {"symbol": "NYS1", "type": "Common Stock", "mic": "XNYS"},
+        {"symbol": "ASE1", "type": "Common Stock", "mic": "XASE"},
+        {"symbol": "OTC1", "type": "Common Stock", "mic": "OOTC"},   # لازم يسقط
+        {"symbol": "ETF1", "type": "ETP", "mic": "XNAS"},            # مو سهم عادي
+        {"symbol": "DOT.A", "type": "Common Stock", "mic": "XNAS"},  # فيه نقطة
+    ]
+    bot.finnhub_request = lambda api_key, endpoint, params, fatal=True: symbol_rows
+    try:
+        got = bot.us_common_stocks("k", {})
+        ok = got == ["ASE1", "NAS1", "NYS1"]
+        failures += not ok
+        print(f"{'نجح ' if ok else 'فشل '} فلتر البورصة: OTC والصناديق يسقطون، البورصات الحقيقية تعدي -> {got}")
+    finally:
+        bot.finnhub_request = original_finnhub_ex
+
+    # متوسط الحجم — ⚠️ Finnhub يرجّعه بالمليون (0.19654 = 196,540 سهم)
+    VOLUME_CASES = [
+        ({"metric": {"10DayAverageTradingVolume": 1.5}}, 1_500_000, "1.5 مليون سهم"),
+        ({"metric": {"10DayAverageTradingVolume": 0.19654}}, 196_540, "الرقم الحقيقي من ALGS"),
+        ({"metric": {}}, None, "الحقل ناقص → None، فيسقط السهم"),
+        ({"_error": "boom"}, None, "الطلب فشل → None"),
+    ]
+    for payload, expected, note in VOLUME_CASES:
+        original = bot.finnhub_request
+        bot.finnhub_request = lambda api_key, endpoint, params, fatal=True, _p=payload: _p
+        try:
+            got = bot.average_daily_volume("k", "SYM")
+        finally:
+            bot.finnhub_request = original
+        ok = got == expected
+        failures += not ok
+        print(f"{'نجح ' if ok else 'فشل '} متوسط الحجم (تحويل الوحدات): {note:35s} -> {got}")
+
+    # `metric` تُطلب للناجين من القيمة السوقية والفلوت فقط — لو طلبناها للكل
+    # تصير المدة ~3 ساعات بدل ~1.5
+    endpoints_called = []
+    original_finnhub_o = bot.finnhub_request
+    original_us_o = bot.us_common_stocks
+    original_sleep_o = bot.time.sleep
+    bot.time.sleep = lambda seconds: None
+    order_profiles = {
+        "GOOD": {"marketCapitalization": 45.0, "floatingShare": 0.6, "name": "G"},
+        "BIG1": {"marketCapitalization": 999.0, "floatingShare": 0.6, "name": "B"},
+        "BIG2": {"marketCapitalization": 999.0, "floatingShare": 0.6, "name": "B"},
+    }
+
+    def counting_finnhub(api_key, endpoint, params, fatal=False):
+        endpoints_called.append(endpoint)
+        if endpoint == "stock/metric":
+            return {"metric": {"10DayAverageTradingVolume": 1.5}}
+        return order_profiles.get(params["symbol"], {"_error": "missing"})
+
+    bot.us_common_stocks = lambda api_key, config=None: list(order_profiles.keys())
+    bot.finnhub_request = counting_finnhub
+    try:
+        bot.build_watchlist({"finnhub_api_key": "k"})
+        metric_calls = endpoints_called.count("stock/metric")
+        ok = metric_calls == 1  # GOOD بس، مو الثلاثة
+        failures += not ok
+        print(f"{'نجح ' if ok else 'فشل '} metric تُطلب للناجين بس (1 من 3 رموز) -> {metric_calls}")
+    finally:
+        bot.finnhub_request = original_finnhub_o
+        bot.us_common_stocks = original_us_o
+        bot.time.sleep = original_sleep_o
+        if os.path.exists(bot.WATCHLIST_PATH):
+            os.remove(bot.WATCHLIST_PATH)
+
+    # سهم تحت حد السيولة لازم يسقط حتى لو القيمة السوقية والفلوت سليمة
+    original_finnhub_v = bot.finnhub_request
+    original_us_v = bot.us_common_stocks
+    original_sleep_v = bot.time.sleep
+    bot.time.sleep = lambda seconds: None
+    bot.us_common_stocks = lambda api_key, config=None: ["THIN"]
+    bot.finnhub_request = lambda api_key, endpoint, params, fatal=False: (
+        {"metric": {"10DayAverageTradingVolume": 0.25}}  # 250 ألف — تحت حد 300 ألف
+        if endpoint == "stock/metric"
+        else {"marketCapitalization": 45.0, "floatingShare": 0.6, "name": "Thin"}
+    )
+    try:
+        thin, _ = bot.build_watchlist({"finnhub_api_key": "k"})
+        ok = thin == []
+        failures += not ok
+        print(f"{'نجح ' if ok else 'فشل '} سيولة 250 ألف تحت حد 300 ألف → السهم يسقط -> {thin}")
+    finally:
+        bot.finnhub_request = original_finnhub_v
+        bot.us_common_stocks = original_us_v
+        bot.time.sleep = original_sleep_v
+        if os.path.exists(bot.WATCHLIST_PATH):
+            os.remove(bot.WATCHLIST_PATH)
+
+    print()
+    # ===== المرحلة ب: الغربلة المجانية قبل صرف أي رصيد =====
+    watchlist_3 = [{"symbol": "HOT"}, {"symbol": "WARM"}, {"symbol": "COLD"}]
+    changes = {"HOT": 12.0, "WARM": 7.0, "COLD": 1.0}
+    original_finnhub_b = bot.finnhub_request
+    bot.finnhub_request = lambda api_key, endpoint, params, fatal=True: {
+        "c": 10.0, "dp": changes.get(params["symbol"], 0.0)
+    }
+    try:
+        movers, err = bot.find_movers({"finnhub_api_key": "k"}, {}, watchlist_3)
+        got = [m["symbol"] for m in movers]
+        ok = err is None and got == ["HOT", "WARM"]  # COLD تحت 5%، والترتيب تنازلي
+        failures += not ok
+        print(f"{'نجح ' if ok else 'فشل '} المرحلة ب: تحت 5% يسقط، والباقي مرتب تنازلياً -> {got}")
+
+        # التهدئة: رمز اتصعّد قبل شوي ما يتصعّد مرة ثانية
+        recent = {"last_escalation": {"HOT": datetime.now(timezone.utc).isoformat()}}
+        movers2, _ = bot.find_movers({"finnhub_api_key": "k"}, recent, watchlist_3)
+        ok = [m["symbol"] for m in movers2] == ["WARM"]
+        failures += not ok
+        print(f"{'نجح ' if ok else 'فشل '} التهدئة: رمز اتصعّد للتو يُتخطى -> {[m['symbol'] for m in movers2]}")
+
+        # تهدئة منتهية → يرجع
+        old = {"last_escalation": {"HOT": (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()}}
+        movers3, _ = bot.find_movers({"finnhub_api_key": "k"}, old, watchlist_3)
+        ok = "HOT" in [m["symbol"] for m in movers3]
+        failures += not ok
+        print(f"{'نجح ' if ok else 'فشل '} التهدئة: بعد ما تنتهي المدة الرمز يرجع للفحص")
+    finally:
+        bot.finnhub_request = original_finnhub_b
+
+    # الأهم: سهم ما تحرّك بما يكفي **ما يوصل Twelve Data إطلاقاً**
+    td_calls = []
+    original_finnhub_c = bot.finnhub_request
+    original_td_c = bot.twelvedata_request
+    original_sleep_c = bot.time.sleep
+    bot.time.sleep = lambda seconds: None
+    bot.finnhub_request = lambda api_key, endpoint, params, fatal=True: {"c": 10.0, "dp": 1.0}
+    bot.twelvedata_request = lambda api_key, endpoint, params: td_calls.append(endpoint)
+    bot.save_watchlist([{"symbol": "FLAT"}])
+    try:
+        alerts, err = bot.scan_watchlist(SCAN_CONFIG, {})
+        ok = alerts == [] and err is None and td_calls == []
+        failures += not ok
+        print(f"{'نجح ' if ok else 'فشل '} سهم متغيّر 1% ما يكلّف ولا رصيد Twelve Data -> نداءات={td_calls}")
+    finally:
+        bot.finnhub_request = original_finnhub_c
+        bot.twelvedata_request = original_td_c
+        bot.time.sleep = original_sleep_c
+        if os.path.exists(bot.WATCHLIST_PATH):
+            os.remove(bot.WATCHLIST_PATH)
+
+    print()
+    # ===== سقف الميزانية اليومي =====
+    now = datetime.now(timezone.utc)
+    today = now.strftime("%Y-%m-%d")
+
+    fresh = {}
+    bot.record_credits(fresh, 5, now)
+    ok = bot.credits_used_today(fresh, now) == 5
+    failures += not ok
+    print(f"{'نجح ' if ok else 'فشل '} عدّاد الأرصدة يسجّل الاستهلاك -> {bot.credits_used_today(fresh, now)}")
+
+    stale = {"credits_date": "2020-01-01", "credits_used": 700}
+    ok = bot.credits_used_today(stale, now) == 0
+    failures += not ok
+    print(f"{'نجح ' if ok else 'فشل '} عدّاد الأرصدة يُصفّر مع يوم UTC جديد -> {bot.credits_used_today(stale, now)}")
+
+    # الفحص يوقف قبل ما يتجاوز السقف، مو بعده
+    td_calls2 = []
+    original_finnhub_d = bot.finnhub_request
+    original_td_d = bot.twelvedata_request
+    original_sleep_d = bot.time.sleep
+    bot.time.sleep = lambda seconds: None
+    bot.finnhub_request = lambda api_key, endpoint, params, fatal=True: {"c": 10.0, "dp": 20.0}
+    bot.twelvedata_request = lambda api_key, endpoint, params: td_calls2.append(endpoint)
+    bot.save_watchlist([{"symbol": f"S{i}"} for i in range(16)])
+    spent_state = {"credits_date": today, "credits_used": 748}  # سقف 750، باقي رصيدان
+    try:
+        bot.scan_watchlist(dict(SCAN_CONFIG, daily_credit_budget=750), spent_state)
+        # دفعة الـ8 ما تدخل في رصيدين متبقيين → ما ينصرف ولا نداء
+        ok = td_calls2 == [] and bot.credits_used_today(spent_state, now) == 748
+        failures += not ok
+        print(f"{'نجح ' if ok else 'فشل '} سقف الميزانية يوقف الفحص قبل التجاوز -> نداءات={td_calls2}")
+    finally:
+        bot.finnhub_request = original_finnhub_d
+        bot.twelvedata_request = original_td_d
+        bot.time.sleep = original_sleep_d
+        if os.path.exists(bot.WATCHLIST_PATH):
+            os.remove(bot.WATCHLIST_PATH)
+
+    print()
+    # ===== منظّم معدّل Finnhub المشترك =====
+    # لازم يكون على مستوى الملف: /refresh والفحص يطلبون بالتوازي، ولو كل
+    # واحد نظّم نفسه على 55 صار المجموع 110 وهذا فوق حد Finnhub (60).
+    slept = []
+    original_sleep_r = bot.time.sleep
+    bot.time.sleep = lambda seconds: slept.append(seconds)
+    saved_slot = bot._finnhub_next_slot
+    try:
+        bot._finnhub_next_slot = 0.0
+        for _ in range(4):
+            bot.finnhub_wait_for_slot()
+        # أول نداء ما ينتظر، والباقي ينتظرون ~60/55 ثانية لكل واحد
+        waits = [s for s in slept if s > 0]
+        expected_gap = 60 / bot.FINNHUB_RATE_LIMIT_PER_MINUTE
+        ok = len(waits) >= 2 and all(w <= expected_gap * 3 + 0.1 for w in waits)
+        failures += not ok
+        print(f"{'نجح ' if ok else 'فشل '} منظّم Finnhub يباعد الطلبات ({bot.FINNHUB_RATE_LIMIT_PER_MINUTE}/دقيقة) -> انتظارات={[round(w,2) for w in waits]}")
+    finally:
+        bot.time.sleep = original_sleep_r
+        bot._finnhub_next_slot = saved_slot
 
     print()
     # حادثة 2026-08-12: /list كان يقصّ القائمة عند 40 سهم ويكتب "و X غيرهم"
@@ -342,7 +584,7 @@ def main():
     scan_calls = []
     broadcast_calls = []
 
-    def fake_scan_exhausted(config):
+    def fake_scan_exhausted(config, state=None):
         scan_calls.append(1)
         return None, (
             "Twelve Data: You have run out of API credits for the day. 801 "
@@ -405,10 +647,15 @@ def main():
     }
     saves_seen = []
 
+    # 1.5 مليون سهم/يوم — فوق حد السيولة، فما يسقط أحد بسببه في هذي الاختبارات
+    liquid_metric = {"metric": {"10DayAverageTradingVolume": 1.5}}
+
     def fake_finnhub(api_key, endpoint, params, fatal=False):
+        if endpoint == "stock/metric":
+            return liquid_metric
         return profiles.get(params["symbol"], {"_error": "missing"})
 
-    bot.us_common_stocks = lambda api_key: list(profiles.keys())
+    bot.us_common_stocks = lambda api_key, config=None: list(profiles.keys())
     bot.finnhub_request = fake_finnhub
     original_save = bot.save_watchlist
     bot.save_watchlist = lambda wl: (saves_seen.append(len(wl)), original_save(wl))
@@ -429,9 +676,9 @@ def main():
         # الحد الأقصى (قراره 2026-08-11): يوقف فور ما يوصله، ما يكمل السوق.
         # كل الرموز هنا مطابقة، فلو ما في حد بيرجع 3 — لازم يرجع 2 بالضبط.
         many = {f"S{i}": {"marketCapitalization": 45.0, "floatingShare": 0.6, "name": f"S{i}"} for i in range(10)}
-        bot.us_common_stocks = lambda api_key: list(many.keys())
-        bot.finnhub_request = lambda api_key, endpoint, params, fatal=False: many.get(
-            params["symbol"], {"_error": "missing"}
+        bot.us_common_stocks = lambda api_key, config=None: list(many.keys())
+        bot.finnhub_request = lambda api_key, endpoint, params, fatal=False: (
+            liquid_metric if endpoint == "stock/metric" else many.get(params["symbol"], {"_error": "missing"})
         )
         capped, _ = bot.build_watchlist({"finnhub_api_key": "x", "max_watchlist_size": 3})
         ok3 = len(capped) == 3
@@ -485,6 +732,10 @@ def main():
     total = (
         len(CASES) + len(SUNDAY_CASES) + len(FILTER_CASES) + len(cases) + 2
         + len(CHAT_ID_CASES) + 3 + len(EXHAUSTED_CASES) + 3 + 3 + 1 + 3 + 1
+        + 1 + len(VOLUME_CASES) + 1 + 1   # فلتر البورصة، متوسط الحجم، ترتيب metric، السيولة
+        + 3 + 1                            # المرحلة ب: الغربلة والتهدئة، وعدم صرف رصيد
+        + 2 + 1                            # عدّاد الأرصدة وتصفيره، وسقف الميزانية
+        + 1                                # منظّم معدّل Finnhub
     )
     if failures:
         print(f"❌ فشل {failures} اختبار")

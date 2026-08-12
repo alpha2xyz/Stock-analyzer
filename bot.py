@@ -21,6 +21,30 @@ from datetime import datetime, timedelta, timezone
 # مهام طويلة شغّالة الحين — يمنع تشغيل نفس المهمة مرتين مع بعض
 BUSY = {}
 
+# منظّم معدّل Finnhub — مشترك بين كل المسارات.
+#
+# ليش على مستوى الملف مو داخل كل دالة: بعد إضافة الغربلة السريعة (المرحلة ب)
+# صار في مسارين يطلبون من Finnhub بالتوازي — /refresh في خيط، والفحص في خيط
+# ثاني. لو كل واحد نظّم نفسه على 55 طلب/دقيقة، مجموعهم 110 وهذا فوق حد
+# Finnhub (60) ويجيب أخطاء 429. منظّم واحد يمر منه الكل يمنع هذا نهائياً.
+FINNHUB_RATE_LIMIT_PER_MINUTE = 55  # هامش أمان تحت حد Finnhub الفعلي (60)
+_finnhub_lock = threading.Lock()
+_finnhub_next_slot = 0.0
+
+
+def finnhub_wait_for_slot():
+    """يحجز الفتحة التالية لطلب Finnhub وينتظرها. آمن مع الخيوط المتعددة."""
+    global _finnhub_next_slot
+
+    with _finnhub_lock:
+        now = time.time()
+        slot = max(now, _finnhub_next_slot)
+        _finnhub_next_slot = slot + (60 / FINNHUB_RATE_LIMIT_PER_MINUTE)
+
+    wait = slot - time.time()
+    if wait > 0:
+        time.sleep(wait)
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config.json")
 STATE_PATH = os.path.join(HERE, "state.json")
@@ -210,6 +234,8 @@ def finnhub_request(api_key, endpoint, params, fatal=True):
     query["token"] = api_key
     url = FINNHUB_API.format(endpoint=endpoint) + "?" + urllib.parse.urlencode(query)
 
+    finnhub_wait_for_slot()  # كل نداء Finnhub يمر من هنا — لا تتجاوزه في أي مسار
+
     try:
         with urllib.request.urlopen(url, timeout=30) as response:
             return json.loads(response.read().decode("utf-8"))
@@ -334,10 +360,18 @@ DEFAULTS = {
     "min_market_cap_musd": 40,      # مليون دولار
     "max_market_cap_musd": 60,      # مليون دولار
     "min_float_shares": 500_000,
+    "max_float_shares": 15_000_000, # قراره 2026-08-12 — فلوت صغير = حركة أوضح
+    "min_avg_volume_shares": 300_000,  # سيولة كافية للدخول والخروج
+    "min_change_percent": 5.0,      # الغربلة السريعة (المرحلة ب) — مجانية من Finnhub
+    # بورصات حقيقية بس. OOTC (أسهم OTC) مستبعدة عمداً: 73% من السوق، وأغلبها
+    # أسهم أجنبية بأجزاء من السنت ما تصلح لاستراتيجية قفزة حجم خلال اليوم.
+    "allowed_exchanges": ["XNAS", "XNYS", "XASE"],  # ناسداك، نيويورك، نيويورك أمريكان
     "volume_spike_ratio": 2.0,      # تجريبي — يتعدّل بعد ما نشوف نتائج حقيقية
     "scan_interval_minutes": 15,
     "atr_multiplier": 1.75,         # مضاعف وقف الخسارة، يبدأ بين 1.5 و 2 حسب المواصفات
-    "max_watchlist_size": 50,       # /refresh يوقف فور ما يوصلها، بدل ما يكمل السوق كله
+    "max_watchlist_size": 300,      # Twelve Data ما عادت القيد بعد الغربلة المجانية
+    "escalation_cooldown_minutes": 60,  # سهم طالع طول اليوم ما يستهلك رصيد كل فحصة
+    "daily_credit_budget": 750,     # هامش أمان تحت حد Twelve Data اليومي (800)
 }
 
 
@@ -384,16 +418,26 @@ def load_watchlist_backup():
         return None
 
 
-def us_common_stocks(api_key):
-    """قائمة كل الأسهم العادية الأمريكية. الصناديق والسندات مستبعدة."""
+def us_common_stocks(api_key, config=None):
+    """أسهم عادية مدرجة في بورصات حقيقية. الصناديق والسندات وأسهم OTC مستبعدة.
+
+    فلترة البورصة **مجانية تماماً** — حقل `mic` يجي مع نفس الرد، بدون أي طلب
+    إضافي. أثرها كبير: 18,434 سهم "عادي" تصير 4,951، لأن 13,483 منها OOTC
+    (أسهم OTC)، وأغلبها أجنبية بأجزاء من السنت. هذا وحده يقصّر /refresh من
+    ~5.6 ساعة إلى ~1.5 ساعة، ويشيل أغلب الأسهم اللي ما تصلح للتداول أصلاً.
+    """
     symbols = finnhub_request(api_key, "stock/symbol", {"exchange": "US"}, fatal=False)
     if not isinstance(symbols, list):
         return []
+
+    allowed = set(setting(config or {}, "allowed_exchanges"))
     return sorted(
         {
             s["symbol"]
             for s in symbols
-            if s.get("type") == "Common Stock" and "." not in s.get("symbol", "")
+            if s.get("type") == "Common Stock"
+            and "." not in s.get("symbol", "")
+            and s.get("mic") in allowed
         }
     )
 
@@ -403,6 +447,11 @@ def passes_size_filter(config, profile):
 
     انتبه: فينهب يرجّع الاثنين بالمليون. القيمة السوقية 45 تعني 45 مليون
     دولار، والفلوت 0.6 يعني 600 ألف سهم.
+
+    **الحد الأقصى للفلوت (قراره 2026-08-12)** له فايدة مزدوجة: فلوت صغير يعني
+    حركة سعرية أوضح عند قفزة الحجم، **وكمان يفرض حد أدنى للسعر تلقائياً** —
+    قيمة سوقية 40-60 مليون مقسومة على فلوت أقصاه 15 مليون سهم = سعر ~$2.67
+    على الأقل. فمشكلة أسهم أجزاء السنت تنحل بدون فلتر سعر منفصل.
     """
     market_cap = profile.get("marketCapitalization")
     float_shares_m = profile.get("floatingShare")
@@ -410,52 +459,70 @@ def passes_size_filter(config, profile):
     if not market_cap or not float_shares_m:
         return False
 
+    float_shares = float_shares_m * 1_000_000
     return (
         setting(config, "min_market_cap_musd") <= market_cap <= setting(config, "max_market_cap_musd")
-        and float_shares_m * 1_000_000 > setting(config, "min_float_shares")
+        and setting(config, "min_float_shares") < float_shares <= setting(config, "max_float_shares")
     )
 
 
+def average_daily_volume(api_key, symbol):
+    """متوسط حجم التداول اليومي (10 أيام) من Finnhub — مجاني، ما يكلف رصيد Twelve Data.
+
+    ⚠️ فخ وحدات: `10DayAverageTradingVolume` يرجع **بالمليون** — القيمة
+    0.19654 تعني 196,540 سهم. نفس فخ القيمة السوقية بالضبط.
+
+    يرجّع None لو الطلب فشل أو الحقل ناقص (فيسقط السهم بدل ما نخمّن).
+    """
+    data = finnhub_request(api_key, "stock/metric", {"symbol": symbol, "metric": "all"}, fatal=False)
+
+    if not isinstance(data, dict) or data.get("_error"):
+        return None
+
+    metric = data.get("metric") or {}
+    raw = metric.get("10DayAverageTradingVolume")
+    if raw in (None, ""):
+        return None
+
+    try:
+        return float(raw) * 1_000_000
+    except (TypeError, ValueError):
+        return None
+
+
 def build_watchlist(config, progress=None):
-    """يمشي على السوق الأمريكي ويطلّع اللي يحقق شرط 1 و 2، ويوقف فور ما
-    يوصل `max_watchlist_size` (افتراضياً 50) — ما يكمل باقي السوق.
+    """المرحلة أ — يبني قائمة المراقبة من Finnhub وحده (مجاناً، بدون أي رصيد
+    Twelve Data)، ويوقف فور ما يوصل `max_watchlist_size`.
 
-    **ليش الحد موجود (قرار 2026-08-11، بعد تجربة حقيقية):** شرط القيمة
-    السوقية (40-60 مليون) كان مفترض إنه ضيّق ويطلّع أسهم قليلة، لكن التجربة
-    الفعلية أثبتت العكس — لقى 335 سهم مطابق من أول ~2000 سهم فحصهم بس (كثير
-    من الأسهم الأمريكية OTC/صغيرة تقع بالضبط في هذا المدى). سوق كامل بدون
-    حد كان بينتج قائمة أكبر بكثير مما تتحمّله ميزانية Twelve Data اليومية.
+    **ثلاث بوابات، مرتبة من الأرخص للأغلى:**
+    1. البورصة — مجانية تماماً، تجي مع قائمة الرموز نفسها (`us_common_stocks`)
+    2. القيمة السوقية والفلوت — طلب `profile2` واحد لكل رمز
+    3. متوسط حجم التداول — طلب `stock/metric` **للناجين من (2) بس**
 
-    شغل طويل — السوق الأمريكي فيه ~18,400 سهم عادي (رقم حقيقي مقاس
-    2026-08-11)، يشتغل في الخلفية عشان ما يعطّل الأوامر.
+    ترتيب (2) قبل (3) مقصود ومهم: لو طلبنا `metric` لكل رمز، تصير الطلبات
+    ضعف العدد والمدة ~3 ساعات بدل ~1.5. الأغلبية الساحقة تسقط عند (2)، فما
+    توصل (3) أصلاً.
 
-    **يحفظ القائمة فور ما يلقى سهم جديد، مو بس في النهاية.** لو انقطع الشغل
-    لأي سبب — إعادة تشغيل البوت، انهيار، انقطاع نت — كل سهم اتلقى لين تلك
-    اللحظة يبقى محفوظ على القرص، ما يروح. (درس 2026-08-11: إعادة تشغيل
-    البوت أثناء فحص وصل لـ 1500/18424 ولقى 25 سهم مسحت كل شي لأن الحفظ كان
-    بس في النهاية.)
+    شغل طويل يشتغل في الخلفية عشان ما يعطّل الأوامر. **يحفظ القائمة فور ما
+    يلقى سهم جديد، مو بس في النهاية** — لو انقطع الشغل لأي سبب (إعادة تشغيل،
+    انهيار، انقطاع نت) اللي اتلقى يبقى محفوظ. (درس 2026-08-11: إعادة تشغيل
+    أثناء فحص وصل 1500/18424 مسحت 25 سهم لأن الحفظ كان بالنهاية بس.)
+
+    التنظيم الزمني للطلبات صار داخل `finnhub_request()` عبر المنظّم المشترك —
+    ما نحسبه هنا، عشان الفحص المتزامن ما يتجاوز حد Finnhub معنا.
     """
     api_key = config["finnhub_api_key"]
     max_size = setting(config, "max_watchlist_size")
-    symbols = us_common_stocks(api_key)
+    min_avg_volume = setting(config, "min_avg_volume_shares")
+    symbols = us_common_stocks(api_key, config)
 
     if not symbols:
         return None, "ما قدرت أجيب قائمة الأسهم من Finnhub."
 
     found = []
     checked = 0
-    next_request_at = 0.0
 
     for symbol in symbols:
-        # ننتظر بس القدر اللي يخلينا عند 55 طلب/دقيقة (تحت حد فينهب 60،
-        # هامش أمان). الفرق عن قبل: ننتظر من بداية الطلب السابق، مو نضيف
-        # ثانية كاملة فوق وقت الرد نفسه — القديمة كانت تعطي ~33 طلب/دقيقة
-        # فقط، مقاسة فعلياً، رغم إن الحد يسمح بالضعف تقريباً.
-        wait = next_request_at - time.time()
-        if wait > 0:
-            time.sleep(wait)
-        next_request_at = time.time() + (60 / 55)
-
         profile = finnhub_request(api_key, "stock/profile2", {"symbol": symbol}, fatal=False)
         checked += 1
 
@@ -463,12 +530,19 @@ def build_watchlist(config, progress=None):
             continue
 
         if passes_size_filter(config, profile):
+            # البوابة الثالثة: السيولة. تُطلب هنا بس — بعد ما السهم عدّى
+            # القيمة السوقية والفلوت — عشان ما نضاعف عدد الطلبات على السوق كله.
+            avg_volume = average_daily_volume(api_key, symbol)
+            if avg_volume is None or avg_volume < min_avg_volume:
+                continue
+
             found.append(
                 {
                     "symbol": symbol,
                     "name": profile.get("name", ""),
                     "market_cap_musd": round(profile["marketCapitalization"], 1),
                     "float_shares": int(profile["floatingShare"] * 1_000_000),
+                    "avg_volume": int(avg_volume),
                 }
             )
             save_watchlist(found)  # حفظ فوري، مو بانتظار نهاية المسح الكامل
@@ -496,6 +570,91 @@ def next_utc_midnight(now=None):
     return (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
 
 
+# ---------------------------------------------------------------
+# حماية ميزانية Twelve Data — عدّاد يومي + تهدئة لكل رمز
+#
+# درس حادثة 2026-08-11: الأرصدة نفدت وسط دوام السوق فبقي البوت أعمى ساعتين.
+# الغربلة المجانية (المرحلة ب) قللت الاستهلاك كثير، لكن ما تلغي الحاجة لسقف
+# صريح — يوم فيه حركة قوية بالسوق ممكن يرفع عدد المرشحين فجأة.
+# ---------------------------------------------------------------
+
+def credits_used_today(state, now=None):
+    """الأرصدة المستهلكة اليوم. يُصفّر تلقائياً مع بداية يوم UTC جديد."""
+    now = now or datetime.now(timezone.utc)
+    if state.get("credits_date") != now.strftime("%Y-%m-%d"):
+        return 0
+    try:
+        return int(state.get("credits_used", 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def record_credits(state, count, now=None):
+    """يسجّل استهلاك أرصدة. رصيد واحد لكل رمز، مو لكل طلب HTTP."""
+    now = now or datetime.now(timezone.utc)
+    state["credits_date"] = now.strftime("%Y-%m-%d")
+    state["credits_used"] = credits_used_today(state, now) + count
+
+
+def escalation_allowed(state, symbol, cooldown_minutes, now=None):
+    """هل مسموح نصرف رصيد على هذا الرمز الحين؟ (تهدئة بعد آخر تصعيد له)"""
+    now = now or datetime.now(timezone.utc)
+    last = (state.get("last_escalation") or {}).get(symbol)
+    if not last:
+        return True
+    try:
+        return now - datetime.fromisoformat(last) >= timedelta(minutes=cooldown_minutes)
+    except (TypeError, ValueError):
+        return True  # طابع وقت تالف ما يستاهل يعطّل الرمز للأبد
+
+
+def record_escalation(state, symbol, now=None):
+    now = now or datetime.now(timezone.utc)
+    state.setdefault("last_escalation", {})[symbol] = now.isoformat()
+
+
+def find_movers(config, state, watchlist):
+    """المرحلة ب — الغربلة السريعة المجانية.
+
+    Finnhub `quote` يعطي نسبة التغير اليومي (`dp`) **مجاناً**، بحد 60 طلب في
+    الدقيقة. فبدل ما نصرف رصيد Twelve Data على كل سهم في القائمة كل فحصة،
+    نغربل هنا أول ونمرّر المتحركين بس.
+
+    يرجّع المرشحين **مرتبين تنازلياً بنسبة التغير** — لو ضربنا سقف الميزانية،
+    الأقوى حركةً يتفحص أول.
+    """
+    api_key = config.get("finnhub_api_key")
+    if not api_key:
+        return [], "الحقل finnhub_api_key فاضي في config.json"
+
+    threshold = setting(config, "min_change_percent")
+    cooldown = setting(config, "escalation_cooldown_minutes")
+
+    movers = []
+    for item in watchlist:
+        symbol = item["symbol"]
+
+        # التهدئة تُفحص قبل الطلب — توفّر وقت Finnhub كمان، مو الأرصدة بس
+        if not escalation_allowed(state, symbol, cooldown):
+            continue
+
+        quote = finnhub_request(api_key, "quote", {"symbol": symbol}, fatal=False)
+        if not isinstance(quote, dict) or quote.get("_error"):
+            continue
+
+        try:
+            change = float(quote.get("dp") or 0)
+            price = float(quote.get("c") or 0)
+        except (TypeError, ValueError):
+            continue
+
+        if price > 0 and change >= threshold:
+            movers.append({"symbol": symbol, "change_percent": change})
+
+    movers.sort(key=lambda m: m["change_percent"], reverse=True)
+    return movers, None
+
+
 def twelvedata_request(api_key, endpoint, params):
     """طلب لـ Twelve Data. يرجّع None لو صار خطأ شبكة."""
     query = dict(params)
@@ -514,29 +673,52 @@ def twelvedata_request(api_key, endpoint, params):
         return None
 
 
-def scan_watchlist(config):
-    """شرط 3 و 4 على الأسهم اللي نجت من شرط 1 و 2.
+def scan_watchlist(config, state=None):
+    """المرحلتان ب و ج — الغربلة المجانية ثم التأكيد المدفوع.
 
-    الترتيب مقصود: نجيب quote للكل مجمّعة أول (رصيد لكل سهم)، وما نطلب
-    vwap إلا لللي نجح في شرط الحجم. الأغلب يسقط قبلها، فنوفّر أرصدة.
+    **ب (Finnhub، مجانية):** من تحرّك اليوم ≥ `min_change_percent`؟
+    **ج (Twelve Data، أرصدة):** للمتحركين بس — حجم اليوم مقابل معدله (شرط 3)،
+    ثم VWAP للناجين (شرط 4)، ثم ATR لمن حقق الأربعة (وقف الخسارة).
+
+    كل مرحلة أغلى من اللي قبلها، والترتيب مقصود عشان الأغلب يسقط وهو رخيص.
     """
     api_key = config.get("twelvedata_api_key")
     if not api_key:
         return None, "الحقل twelvedata_api_key فاضي في config.json"
 
+    state = {} if state is None else state
+
     watchlist = load_watchlist()
     if not watchlist:
         return None, "قائمة المراقبة فاضية. شغّل /refresh أول."
 
-    symbols = [item["symbol"] for item in watchlist]
+    # المرحلة ب — مجانية بالكامل، ما تصرف ولا رصيد
+    movers, error = find_movers(config, state, watchlist)
+    if error:
+        return None, error
+    if not movers:
+        return [], None
+
+    symbols = [m["symbol"] for m in movers]
+    change_by_symbol = {m["symbol"]: m["change_percent"] for m in movers}
     spike_ratio = setting(config, "volume_spike_ratio")
+    budget = setting(config, "daily_credit_budget")
 
     # تيليفن داتا يقبل عدة رموز في طلب واحد، بس الأرصدة تُحسب لكل رمز.
     # نقسّمها لدفعات صغيرة عشان ما نتجاوز 8 أرصدة في الدقيقة.
     volume_passed = []
     for batch_start in range(0, len(symbols), 8):
         batch = symbols[batch_start : batch_start + 8]
+
+        # سقف الميزانية اليومي — نوقف قبل ما نتجاوزه، مو بعد
+        if credits_used_today(state) + len(batch) > budget:
+            print(f"وقفت الفحص: وصلت سقف الميزانية اليومي ({budget} رصيد)")
+            break
+
         data = twelvedata_request(api_key, "quote", {"symbol": ",".join(batch)})
+        record_credits(state, len(batch))
+        for symbol in batch:
+            record_escalation(state, symbol)
 
         if not data:
             continue
@@ -560,7 +742,13 @@ def scan_watchlist(config):
 
             if average > 0 and price > 0 and volume >= average * spike_ratio:
                 volume_passed.append(
-                    {"symbol": symbol, "price": price, "volume": volume, "average_volume": average}
+                    {
+                        "symbol": symbol,
+                        "price": price,
+                        "volume": volume,
+                        "average_volume": average,
+                        "change_percent": change_by_symbol.get(symbol),
+                    }
                 )
 
         if batch_start + 8 < len(symbols):
@@ -569,9 +757,14 @@ def scan_watchlist(config):
     # شرط 4: السعر فوق VWAP — للناجين بس
     above_vwap = []
     for candidate in volume_passed:
+        if credits_used_today(state) + 1 > budget:
+            print(f"وقفت مرحلة VWAP: وصلت سقف الميزانية اليومي ({budget} رصيد)")
+            break
+
         vwap_data = twelvedata_request(
             api_key, "vwap", {"symbol": candidate["symbol"], "interval": "5min", "outputsize": "1"}
         )
+        record_credits(state, 1)
         time.sleep(8)
 
         if not vwap_data:
@@ -600,6 +793,7 @@ def scan_watchlist(config):
     alerts = []
     for candidate in above_vwap:
         stop = compute_stop_loss(config, api_key, candidate["symbol"], candidate["price"])
+        record_credits(state, 1)
         time.sleep(8)
         if stop is not None:
             candidate["stop_loss"] = stop["stop_loss"]
@@ -657,6 +851,12 @@ def format_alert(candidate):
         f"الحجم: {LTR}{int(candidate['volume']):,} سهم",
         f"المعدل: {LTR}{int(candidate['average_volume']):,} سهم",
         f"القفزة: {LTR}{round(ratio, 1)}× المعدل",
+    ]
+
+    if candidate.get("change_percent") is not None:
+        lines.append(f"التغير اليوم: {LTR}{round(candidate['change_percent'], 1)}%")
+
+    lines += [
         "",
         f"الشارت: {LTR}{tradingview_url(symbol)}",
     ]
@@ -687,9 +887,10 @@ def cmd_list(config):
 
     lines = [f"📋 قائمة المراقبة — {LTR}{len(watchlist)} سهم", ""]
     for item in watchlist:
-        lines.append(
-            f"{LTR}{item['symbol']} — {LTR}{item['market_cap_musd']}M — فلوت {LTR}{item['float_shares']:,}"
-        )
+        line = f"{LTR}{item['symbol']} — {LTR}{item['market_cap_musd']}M — فلوت {LTR}{item['float_shares']:,}"
+        if item.get("avg_volume"):
+            line += f" — حجم {LTR}{item['avg_volume']:,}"
+        lines.append(line)
 
     return "\n".join(lines)  # send_message_chunked() يقسّمها لعدة رسائل لو طولت، ما نقصّها هنا
 
@@ -718,6 +919,10 @@ def cmd_status(config, state):
     if watchlist:
         interval = setting(config, "scan_interval_minutes")
         lines.append(f"الفحص التلقائي: كل {LTR}{interval} دقيقة وقت السوق")
+        lines.append(f"حد التغير للفحص المدفوع: {LTR}{setting(config, 'min_change_percent')}%")
+
+    budget = setting(config, "daily_credit_budget")
+    lines.append(f"أرصدة Twelve Data اليوم: {LTR}{credits_used_today(state)} من {LTR}{budget}")
 
     last_scan = state.get("last_scan")
     if last_scan:
@@ -898,7 +1103,7 @@ def start_scan(config, state, manual=False):
         started = time.time()
         print(f"بدأ الفحص: {len(watchlist)} سهم")
 
-        alerts, error = scan_watchlist(config)
+        alerts, error = scan_watchlist(config, state)
         state["last_scan"] = datetime.now().strftime("%Y-%m-%d %H:%M")
 
         took = round((time.time() - started) / 60, 1)
