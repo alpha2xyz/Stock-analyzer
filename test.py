@@ -676,7 +676,7 @@ def main():
     many_stocks = [{"symbol": f"SYM{i}", "market_cap_musd": 45.0, "float_shares": 600000} for i in range(45)]
     bot.save_watchlist(many_stocks)
     list_text = bot.cmd_list({})
-    ok = "غيرهم" not in list_text and all(f"SYM{i}" in list_text for i in range(45))
+    ok = "others" not in list_text.lower() and all(f"SYM{i}" in list_text for i in range(45))
     failures += not ok
     print(f"{'نجح ' if ok else 'فشل '} cmd_list: قائمة ٤٥ سهم تظهر كاملة، ما تُقصّ عند ٤٠")
     if os.path.exists(bot.WATCHLIST_PATH):
@@ -734,7 +734,7 @@ def main():
         print(f"{'نجح ' if ok else 'فشل '} فحص تلقائي وهو موقوف: يتجاهل بصمت، ما يعيد الاتصال بـ Twelve Data -> scan_calls={len(scan_calls)}")
 
         third_manual = bot.start_scan(scan_config, state, manual=True)
-        ok = bool(third_manual) and "أرصدة" in third_manual and len(scan_calls) == 1
+        ok = bool(third_manual) and "credits" in third_manual.lower() and len(scan_calls) == 1
         failures += not ok
         print(f"{'نجح ' if ok else 'فشل '} أمر /scan يدوي وهو موقوف: يرد برسالة واضحة، ما يتصل بـ Twelve Data -> {third_manual!r}")
     finally:

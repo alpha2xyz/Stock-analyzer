@@ -59,17 +59,22 @@ TWELVEDATA_API = "https://api.twelvedata.com/{endpoint}"
 LTR = "\u200e"
 
 
+def plural(count, word):
+    """Simple English pluralisation for bot messages: 1 stock, 2 stocks."""
+    return word if count == 1 else word + "s"
+
+
 def load_config():
     if not os.path.exists(CONFIG_PATH):
-        print("ما لقيت ملف config.json")
-        print("سو نسخة من config.example.json وسمها config.json وعبّي البيانات فيه.")
+        print("config.json not found")
+        print("Copy config.example.json to config.json and fill in your details.")
         sys.exit(1)
 
     with open(CONFIG_PATH, "r", encoding="utf-8") as f:
         config = json.load(f)
 
     if not config.get("telegram_bot_token"):
-        print("الحقل telegram_bot_token فاضي في config.json")
+        print("telegram_bot_token is empty in config.json")
         sys.exit(1)
 
     return config
@@ -113,15 +118,15 @@ def market_state(utc_now=None):
     ny = new_york_now(utc_now)
 
     if ny.weekday() >= 5:
-        return False, "مقفل — نهاية الأسبوع"
+        return False, "Closed — weekend"
 
     minutes = ny.hour * 60 + ny.minute
     if minutes < 9 * 60 + 30:
-        return False, "مقفل — يفتح 9:30 صباحاً بتوقيت نيويورك"
+        return False, "Closed — opens 9:30 AM New York time"
     if minutes >= 16 * 60:
-        return False, "مقفل — انتهى دوام اليوم"
+        return False, "Closed — session ended"
 
-    return True, "مفتوح"
+    return True, "Open"
 
 
 # ---------------------------------------------------------------
@@ -161,7 +166,7 @@ def telegram_request(token, method, params=None, fatal=True):
         if not fatal:
             # داخل حلقة التشغيل المستمر، انقطاع النت لحظة ما يوقف البوت
             return None
-        print(f"ما قدرت أوصل لتيليجرام. تأكد من الإنترنت. ({reason})")
+        print(f"Could not reach Telegram. Check your internet. ({reason})")
         sys.exit(1)
 
 
@@ -211,8 +216,8 @@ def print_chat_ids(token):
     updates = result.get("result", [])
 
     if not updates:
-        print("ما وصلت أي رسالة للبوت.")
-        print("افتح تيليجرام، ادخل على البوت حقك، وأرسل له كلمة أي كلمة، ثم أعد هذا الأمر.")
+        print("The bot has not received any messages.")
+        print("Open Telegram, message your bot anything, then run this command again.")
         return
 
     seen = set()
@@ -220,7 +225,7 @@ def print_chat_ids(token):
         chat = update.get("message", {}).get("chat")
         if chat and chat["id"] not in seen:
             seen.add(chat["id"])
-            name = chat.get("first_name") or chat.get("title") or "بدون اسم"
+            name = chat.get("first_name") or chat.get("title") or "no name"
             print(f"chat_id = {chat['id']}   ({name})")
 
 
@@ -241,11 +246,11 @@ def finnhub_request(api_key, endpoint, params, fatal=True):
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
         if error.code == 401:
-            messages = ["مفتاح Finnhub غلط أو ما عاد شغّال.", "تأكد من الحقل finnhub_api_key في config.json"]
+            messages = ["Finnhub key is invalid or no longer active.", "Check finnhub_api_key in config.json"]
         elif error.code == 429:
-            messages = ["تجاوزت عدد الطلبات المسموح فيها في الباقة المجانية.", "انتظر دقيقة وأعد المحاولة."]
+            messages = ["Exceeded the free plan request limit.", "Wait a minute and try again."]
         else:
-            messages = [f"Finnhub رجّع خطأ. الكود: {error.code}"]
+            messages = [f"Finnhub returned an error. Code: {error.code}"]
 
         if not fatal:
             return {"_error": "\n".join(messages)}
@@ -255,7 +260,7 @@ def finnhub_request(api_key, endpoint, params, fatal=True):
     except (urllib.error.URLError, TimeoutError, OSError) as error:
         if not fatal:
             return None
-        print(f"ما قدرت أوصل لـ Finnhub. تأكد من الإنترنت. ({getattr(error, 'reason', error)})")
+        print(f"Could not reach Finnhub. Check your internet. ({getattr(error, 'reason', error)})")
         sys.exit(1)
 
 
@@ -264,8 +269,8 @@ def get_quote(api_key, symbol):
     quote = finnhub_request(api_key, "quote", {"symbol": symbol})
 
     if not quote.get("c"):
-        print(f"ما لقيت بيانات للرمز {symbol}.")
-        print("تأكد إنه رمز سهم أمريكي صحيح، مثل AAPL أو TSLA.")
+        print(f"No data found for {symbol}.")
+        print("Make sure it is a valid US stock symbol, like AAPL or TSLA.")
         sys.exit(1)
 
     return quote
@@ -281,15 +286,15 @@ def format_quote(symbol, quote):
 
     return "\n".join(
         [
-            f"{arrow} {LTR}{symbol}",
+            f"{arrow} {symbol}",
             "",
-            f"السعر الحالي: {LTR}{quote['c']}",
-            f"التغيّر: {LTR}{change} ({LTR}{change_percent}%)",
-            f"أعلى سعر اليوم: {LTR}{quote.get('h')}",
-            f"أقل سعر اليوم: {LTR}{quote.get('l')}",
-            f"إغلاق أمس: {LTR}{quote.get('pc')}",
+            f"Price: {quote['c']}",
+            f"Change: {change} ({change_percent}%)",
+            f"Day high: {quote.get('h')}",
+            f"Day low: {quote.get('l')}",
+            f"Prev close: {quote.get('pc')}",
             "",
-            f"الوقت: {LTR}{now}",
+            f"Time: {now}",
         ]
     )
 
@@ -297,8 +302,8 @@ def format_quote(symbol, quote):
 def send_price(config, symbol):
     api_key = config.get("finnhub_api_key")
     if not api_key:
-        print("الحقل finnhub_api_key فاضي في config.json")
-        print("سجّل حساب مجاني في finnhub.io وحط المفتاح فيه.")
+        print("finnhub_api_key is empty in config.json")
+        print("Sign up free at finnhub.io and put the key there.")
         sys.exit(1)
 
     chat_id = require_chat_id(config)
@@ -306,9 +311,9 @@ def send_price(config, symbol):
     response = send_message(config["telegram_bot_token"], chat_id, format_quote(symbol, quote))
 
     if response.get("ok"):
-        print(f"تم إرسال سعر {symbol} بنجاح. شوف تيليجرام.")
+        print(f"Sent the price for {symbol}. Check Telegram.")
     else:
-        print("فشل الإرسال:")
+        print("Send failed:")
         print(json.dumps(response, ensure_ascii=False, indent=2))
         sys.exit(1)
 
@@ -320,19 +325,19 @@ def send_price(config, symbol):
 # مصدر واحد للأوامر: منه تتبني قائمة تيليجرام (الزر الأزرق) ورسالة /help
 # مع بعض. أي أمر جديد ينضاف هنا مرة وحدة، وما يصير اختلاف بين الاثنين.
 COMMANDS = [
-    ("status", "حالة البوت والسوق"),
-    ("price", "سعر سهم — مثال: /price AAPL"),
-    ("list", "قائمة الأسهم المراقَبة"),
-    ("scan", "فحص فوري الحين"),
-    ("refresh", "يعيد بناء قائمة المراقبة من السوق كله"),
-    ("restore", "يرجّع القائمة اللي كانت قبل آخر /refresh"),
-    ("mute", "يوقف التنبيهات مؤقتاً"),
-    ("unmute", "يرجّع التنبيهات"),
-    ("help", "يعرض الأوامر"),
+    ("status", "Bot and market status"),
+    ("price", "Stock price — example: /price AAPL"),
+    ("list", "Show the watchlist"),
+    ("scan", "Scan the watchlist now"),
+    ("refresh", "Rebuild the watchlist from the whole market"),
+    ("restore", "Restore the watchlist from before the last /refresh"),
+    ("mute", "Pause alerts"),
+    ("unmute", "Resume alerts"),
+    ("help", "Show commands"),
 ]
 
 HELP_TEXT = "\n".join(
-    ["الأوامر المتاحة:", ""] + [f"/{name} — {description}" for name, description in COMMANDS]
+    ["Available commands:", ""] + [f"/{name} — {description}" for name, description in COMMANDS]
 )
 
 
@@ -525,7 +530,7 @@ def build_watchlist(config, progress=None):
     symbols = us_common_stocks(api_key, config)
 
     if not symbols:
-        return None, "ما قدرت أجيب قائمة الأسهم من Finnhub."
+        return None, "Could not fetch the stock list from Finnhub."
 
     found = []
     checked = 0
@@ -633,7 +638,7 @@ def find_movers(config, state, watchlist):
     """
     api_key = config.get("finnhub_api_key")
     if not api_key:
-        return [], "الحقل finnhub_api_key فاضي في config.json"
+        return [], "finnhub_api_key is empty in config.json"
 
     threshold = setting(config, "min_change_percent")
     cooldown = setting(config, "escalation_cooldown_minutes")
@@ -689,7 +694,7 @@ def td_indicator(config, state, api_key, endpoint, params):
     "الفحص انهار".
     """
     if credits_used_today(state) + 1 > setting(config, "daily_credit_budget"):
-        return None, f"وصلت سقف الميزانية اليومي ({setting(config, 'daily_credit_budget')} رصيد)"
+        return None, f"Reached the daily credit budget ({setting(config, 'daily_credit_budget')} credits)"
 
     data = twelvedata_request(api_key, endpoint, params)
     record_credits(state, 1)
@@ -698,7 +703,7 @@ def td_indicator(config, state, api_key, endpoint, params):
     if not data:
         return None, None
     if data.get("code"):
-        message = f"Twelve Data: {data.get('message', 'خطأ غير معروف')}"
+        message = f"Twelve Data: {data.get('message', 'unknown error')}"
         return None, message if is_credit_exhausted(message) else None
 
     return data.get("values") or [], None
@@ -827,13 +832,13 @@ def scan_watchlist(config, state=None):
     """
     api_key = config.get("twelvedata_api_key")
     if not api_key:
-        return None, "الحقل twelvedata_api_key فاضي في config.json"
+        return None, "twelvedata_api_key is empty in config.json"
 
     state = {} if state is None else state
 
     watchlist = load_watchlist()
     if not watchlist:
-        return None, "قائمة المراقبة فاضية. شغّل /refresh أول."
+        return None, "Watchlist is empty. Run /refresh first."
 
     # المرحلة ب — مجانية بالكامل، ما تصرف ولا رصيد
     movers, error = find_movers(config, state, watchlist)
@@ -855,7 +860,7 @@ def scan_watchlist(config, state=None):
 
         # سقف الميزانية اليومي — نوقف قبل ما نتجاوزه، مو بعد
         if credits_used_today(state) + len(batch) > budget:
-            print(f"وقفت الفحص: وصلت سقف الميزانية اليومي ({budget} رصيد)")
+            print(f"Stopped scanning: reached the daily credit budget ({budget} credits)")
             break
 
         data = twelvedata_request(api_key, "quote", {"symbol": ",".join(batch)})
@@ -866,7 +871,7 @@ def scan_watchlist(config, state=None):
         if not data:
             continue
         if data.get("code"):
-            return None, f"Twelve Data: {data.get('message', 'خطأ غير معروف')}"
+            return None, f"Twelve Data: {data.get('message', 'unknown error')}"
 
         # تيلف داتا يرجّع شكلين مختلفين: طلب برمز واحد يرجّع الكائن مباشرة،
         # وبعدة رموز يرجّع قاموس مفاتيحه الرموز. نتعرّف على الشكل من محتواه
@@ -901,7 +906,7 @@ def scan_watchlist(config, state=None):
     above_vwap = []
     for candidate in volume_passed:
         if credits_used_today(state) + 1 > budget:
-            print(f"وقفت مرحلة VWAP: وصلت سقف الميزانية اليومي ({budget} رصيد)")
+            print(f"Stopped at VWAP stage: reached the daily credit budget ({budget} credits)")
             break
 
         vwap_data = twelvedata_request(
@@ -915,7 +920,7 @@ def scan_watchlist(config, state=None):
         if not vwap_data:
             continue
         if vwap_data.get("code"):
-            message = f"Twelve Data: {vwap_data.get('message', 'خطأ غير معروف')}"
+            message = f"Twelve Data: {vwap_data.get('message', 'unknown error')}"
             if is_credit_exhausted(message):
                 return None, message  # نفس معاملة مرحلة quote — يوقف الحظر من هنا برضو
             continue
@@ -942,7 +947,7 @@ def scan_watchlist(config, state=None):
         if error:
             if is_credit_exhausted(error):
                 return None, error
-            print(f"وقفت مرحلة المؤشرات: {error}")
+            print(f"Stopped at indicator stage: {error}")
             break
         if passed:
             candidate.update(details)
@@ -994,43 +999,43 @@ def format_alert(candidate):
     symbol = candidate["symbol"]
 
     lines = [
-        f"🚨 تنبيه — {LTR}{symbol}",
+        f"🚨 ALERT — {symbol}",
         "",
-        f"سعر الدخول: {LTR}{round(candidate['price'], 2)}",
+        f"Entry: {round(candidate['price'], 2)}",
     ]
 
     if candidate.get("stop_loss") is not None:
-        lines.append(f"وقف الخسارة: {LTR}{round(candidate['stop_loss'], 2)}")
-        lines.append(f"(ATR {LTR}{round(candidate['atr'], 2)})")
+        lines.append(f"Stop Loss: {round(candidate['stop_loss'], 2)}")
+        lines.append(f"(ATR {round(candidate['atr'], 2)})")
     else:
-        lines.append("⚠️ وقف الخسارة: ما قدرت أحسبه — راجع السهم يدوياً")
+        lines.append("⚠️ Stop Loss: could not calculate — review manually")
 
     lines += [
         "",
-        f"الحجم: {LTR}{int(candidate['volume']):,} سهم",
-        f"المعدل: {LTR}{int(candidate['average_volume']):,} سهم",
-        f"القفزة: {LTR}{round(ratio, 1)}× المعدل",
+        f"Volume: {int(candidate['volume']):,} shares",
+        f"Average: {int(candidate['average_volume']):,} shares",
+        f"Spike: {round(ratio, 1)}x average",
     ]
 
     if candidate.get("change_percent") is not None:
-        lines.append(f"التغير اليوم: {LTR}{round(candidate['change_percent'], 1)}%")
+        lines.append(f"Change today: {round(candidate['change_percent'], 1)}%")
 
-    lines += ["", "✅ الشروط المتحققة:", f"فوق VWAP: {LTR}{round(candidate['vwap'], 2)}"]
+    lines += ["", "✅ Conditions met:", f"Above VWAP: {round(candidate['vwap'], 2)}"]
 
     for period in (5, 10, 20):
         ema = candidate.get(f"ema{period}")
         if ema is not None:
-            lines.append(f"فوق EMA{LTR}{period}: {LTR}{round(ema, 2)}")
+            lines.append(f"Above EMA{period}: {round(ema, 2)}")
 
     if candidate.get("macd_hist") is not None:
-        lines.append(f"هيستوجرام MACD موجب: {LTR}{round(candidate['macd_hist'], 4)}")
+        lines.append(f"MACD histogram positive: {round(candidate['macd_hist'], 4)}")
 
     if candidate.get("supertrend") is not None:
-        lines.append(f"تقاطع SuperTrend صاعد: {LTR}{round(candidate['supertrend'], 2)}")
+        lines.append(f"SuperTrend bullish cross: {round(candidate['supertrend'], 2)}")
 
     lines += [
         "",
-        f"الشارت: {LTR}{tradingview_url(symbol)}",
+        f"Chart: {tradingview_url(symbol)}",
     ]
 
     return "\n".join(lines)
@@ -1042,26 +1047,26 @@ def tradingview_url(symbol):
 
 def cmd_restore():
     if BUSY.get("refresh"):
-        return "فيه بناء قائمة شغّال الحين. انتظره يخلص قبل ما ترجع للنسخة القديمة."
+        return "A watchlist build is running. Wait for it to finish before restoring."
 
     backup = load_watchlist_backup()
     if backup is None:
-        return "ما في نسخة احتياطية محفوظة — النسخة الاحتياطية تُحفظ تلقائياً أول ما تشغّل /refresh."
+        return "No backup saved yet — a backup is created automatically when you run /refresh."
 
     save_watchlist(backup)
-    return f"✅ رجعت القائمة القديمة: {LTR}{len(backup)} سهم."
+    return f"✅ Restored the previous watchlist: {len(backup)} {plural(len(backup), 'stock')}."
 
 
 def cmd_list(config):
     watchlist = load_watchlist()
     if not watchlist:
-        return "قائمة المراقبة فاضية.\nشغّل /refresh عشان أبنيها من السوق."
+        return "Watchlist is empty.\nRun /refresh to build it from the market."
 
-    lines = [f"📋 قائمة المراقبة — {LTR}{len(watchlist)} سهم", ""]
+    lines = [f"📋 Watchlist — {len(watchlist)} {plural(len(watchlist), 'stock')}", ""]
     for item in watchlist:
-        line = f"{LTR}{item['symbol']} — {LTR}{item['market_cap_musd']}M — فلوت {LTR}{item['float_shares']:,}"
+        line = f"{item['symbol']} — {item['market_cap_musd']}M cap — float {item['float_shares']:,}"
         if item.get("avg_volume"):
-            line += f" — حجم {LTR}{item['avg_volume']:,}"
+            line += f" — vol {item['avg_volume']:,}"
         lines.append(line)
 
     return "\n".join(lines)  # send_message_chunked() يقسّمها لعدة رسائل لو طولت، ما نقصّها هنا
@@ -1075,30 +1080,30 @@ def cmd_status(config, state):
     watchlist = load_watchlist()
 
     lines = [
-        "🤖 حالة البوت",
+        "🤖 Bot Status",
         "",
-        "البوت: شغّال ✅",
-        f"التنبيهات: {'موقوفة 🔕' if muted else 'شغّالة 🔔'}",
-        f"يخدم: {LTR}{len(allowed_chat_ids(config))} محادثة",
+        "Bot: running ✅",
+        f"Alerts: {'muted 🔕' if muted else 'on 🔔'}",
+        f"Serving: {len(allowed_chat_ids(config))} {plural(len(allowed_chat_ids(config)), 'chat')}",
         "",
-        f"السوق الأمريكي: {description}",
-        f"توقيت نيويورك الحين: {LTR}{ny.strftime('%Y-%m-%d %H:%M')}",
-        f"توقيت السعودية الحين: {LTR}{datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        f"US market: {description}",
+        f"New York time: {ny.strftime('%Y-%m-%d %H:%M')}",
+        f"Saudi time: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
         "",
-        f"قائمة المراقبة: {LTR}{len(watchlist)} سهم" if watchlist else "قائمة المراقبة: فاضية — شغّل /refresh",
+        f"Watchlist: {len(watchlist)} {plural(len(watchlist), 'stock')}" if watchlist else "Watchlist: empty — run /refresh",
     ]
 
     if watchlist:
         interval = setting(config, "scan_interval_minutes")
-        lines.append(f"الفحص التلقائي: كل {LTR}{interval} دقيقة وقت السوق")
-        lines.append(f"حد التغير للفحص المدفوع: {LTR}{setting(config, 'min_change_percent')}%")
+        lines.append(f"Auto-scan: every {interval} min during market hours")
+        lines.append(f"Change threshold before paid checks: {setting(config, 'min_change_percent')}%")
 
     budget = setting(config, "daily_credit_budget")
-    lines.append(f"أرصدة Twelve Data اليوم: {LTR}{credits_used_today(state)} من {LTR}{budget}")
+    lines.append(f"Twelve Data credits today: {credits_used_today(state)} of {budget}")
 
     last_scan = state.get("last_scan")
     if last_scan:
-        lines.append(f"آخر فحص: {LTR}{last_scan}")
+        lines.append(f"Last scan: {last_scan}")
 
     blocked_until = state.get("twelvedata_blocked_until")
     if blocked_until:
@@ -1109,40 +1114,40 @@ def cmd_status(config, state):
         if blocked_dt and datetime.now(timezone.utc) < blocked_dt:
             remaining = blocked_dt - datetime.now(timezone.utc)
             hours, minutes = divmod(int(remaining.total_seconds() // 60), 60)
-            lines.append(f"⏸️ أرصدة Twelve Data خلصت — يرجع الفحص بعد حوالي {LTR}{hours} س {LTR}{minutes} د")
+            lines.append(f"⏸️ Twelve Data credits exhausted — scanning resumes in ~{hours}h {minutes}m")
 
     if BUSY.get("refresh"):
-        lines.append("⏳ بناء القائمة شغّال الحين")
+        lines.append("⏳ Building the watchlist right now")
     if BUSY.get("scan"):
-        lines.append("⏳ فحص شغّال الحين")
+        lines.append("⏳ A scan is running right now")
 
     started = state.get("started_at")
     if started:
-        lines.append(f"يشتغل من: {LTR}{started}")
+        lines.append(f"Up since: {started}")
 
     if not is_open:
-        lines += ["", "البوت يستقبل أوامرك على مدار اليوم،", "لكن فحص الأسهم يصير وقت السوق بس."]
+        lines += ["", "The bot accepts your commands 24/7,", "but scanning only runs during market hours."]
 
     return "\n".join(lines)
 
 
 def cmd_price(config, args):
     if not args:
-        return "اكتب رمز السهم بعد الأمر.\nمثال: /price AAPL"
+        return "Add a stock symbol after the command.\nExample: /price AAPL"
 
     api_key = config.get("finnhub_api_key")
     if not api_key:
-        return "الحقل finnhub_api_key فاضي في config.json"
+        return "finnhub_api_key is empty in config.json"
 
     symbol = args[0].upper()
     quote = finnhub_request(api_key, "quote", {"symbol": symbol}, fatal=False)
 
     if quote is None:
-        return "ما قدرت أوصل لمصدر البيانات. جرّب بعد شوي."
+        return "Could not reach the data source. Try again shortly."
     if quote.get("_error"):
         return quote["_error"]
     if not quote.get("c"):
-        return f"ما لقيت بيانات للرمز {symbol}.\nتأكد إنه رمز سهم أمريكي صحيح، مثل AAPL."
+        return f"No data found for {symbol}.\nMake sure it is a valid US stock symbol, like AAPL."
 
     return format_quote(symbol, quote)
 
@@ -1166,11 +1171,11 @@ def handle_command(config, state, text):
     if command == "/mute":
         state["muted"] = True
         save_state(state)
-        return "التنبيهات موقوفة 🔕\nالبوت يضل شغّال. ارجّعها بـ /unmute"
+        return "Alerts muted 🔕\nThe bot keeps running. Resume with /unmute"
     if command == "/unmute":
         state["muted"] = False
         save_state(state)
-        return "التنبيهات رجعت 🔔"
+        return "Alerts resumed 🔔"
     if command == "/list":
         return cmd_list(config)
     if command == "/refresh":
@@ -1180,7 +1185,7 @@ def handle_command(config, state, text):
     if command == "/scan":
         return start_scan(config, state, manual=True)
 
-    return f"ما أعرف الأمر {command}\nاكتب /help تشوف الأوامر المتاحة."
+    return f"Unknown command {command}\nSend /help to see available commands."
 
 
 # ---------------------------------------------------------------
@@ -1197,7 +1202,7 @@ def run_in_background(name, target):
         try:
             target()
         except Exception as error:  # ما نخلي خطأ في مهمة يسقط البوت كله
-            print(f"خطأ في مهمة {name}: {error}")
+            print(f"Error in task {name}: {error}")
         finally:
             BUSY[name] = False
 
@@ -1210,7 +1215,7 @@ def start_refresh(config, state):
     ids = allowed_chat_ids(config)
 
     if BUSY.get("refresh"):
-        return "فيه بناء قائمة شغّال الحين. انتظر لين يخلص."
+        return "A watchlist build is already running. Wait for it to finish."
 
     # نحفظ القائمة الحالية احتياطياً قبل ما /refresh يبدأ يستبدلها — لو ما
     # عجبت النتيجة الجديدة، /restore يرجّع هذي النسخة. مرة وحدة، قبل ما
@@ -1221,7 +1226,7 @@ def start_refresh(config, state):
 
     def job():
         def progress(checked, total, found):
-            broadcast(token, ids, f"⏳ فحصت {LTR}{checked} — لقيت {LTR}{found} من {LTR}{max_size}")
+            broadcast(token, ids, f"⏳ Checked {checked} — found {found} of {max_size}")
 
         found, error = build_watchlist(config, progress)
         if error:
@@ -1230,21 +1235,21 @@ def start_refresh(config, state):
 
         reached_cap = len(found) >= max_size
         headline = (
-            f"✅ وصلت الحد: {LTR}{len(found)} سهم — وقفت الفحص."
+            f"✅ Reached the cap: {len(found)} {plural(len(found), 'stock')} — stopped scanning."
             if reached_cap
-            else f"✅ خلص فحص السوق كله: {LTR}{len(found)} سهم."
+            else f"✅ Finished scanning the whole market: {len(found)} {plural(len(found), 'stock')}."
         )
         broadcast(
             token,
             ids,
-            f"{headline}\nاكتب /list تشوفها.\nما عجبتك؟ اكتب /restore ترجع للقائمة القديمة.",
+            f"{headline}\nSend /list to see it.\nNot happy with it? Send /restore to bring back the previous one.",
         )
 
     if not run_in_background("refresh", job):
-        return "فيه بناء قائمة شغّال الحين. انتظر لين يخلص."
+        return "A watchlist build is already running. Wait for it to finish."
 
-    note = "\nحفظت نسخة من القائمة الحالية، /restore يرجعها لو احتجتها." if had_backup else ""
-    return f"بديت أبني القائمة.\nبوقف تلقائياً فور ما أوصل {LTR}{max_size} سهم، وبخبرك بالتقدم. لو انقطع لأي سبب، اللي اتلقى محفوظ ومو راح.{note}"
+    note = "\nSaved a backup of the current watchlist — /restore brings it back." if had_backup else ""
+    return f"Building the watchlist.\nI stop automatically at {max_size} stocks and will report progress. If it is interrupted, whatever was found is already saved.{note}"
 
 
 def start_scan(config, state, manual=False):
@@ -1253,7 +1258,7 @@ def start_scan(config, state, manual=False):
 
     watchlist = load_watchlist()
     if not watchlist:
-        return "قائمة المراقبة فاضية. شغّل /refresh أول."
+        return "Watchlist is empty. Run /refresh first."
 
     blocked_until = state.get("twelvedata_blocked_until")
     if blocked_until:
@@ -1267,19 +1272,19 @@ def start_scan(config, state, manual=False):
             remaining = blocked_dt - datetime.now(timezone.utc)
             hours, minutes = divmod(int(remaining.total_seconds() // 60), 60)
             return (
-                "⏸️ أرصدة Twelve Data خلصت لهذا اليوم.\n"
-                f"الفحص التلقائي متوقف مؤقتاً، يرجع يشتغل تلقائياً بعد حوالي {LTR}{hours} س {LTR}{minutes} د."
+                "⏸️ Twelve Data credits are exhausted for today.\n"
+                f"Auto-scanning is paused and resumes automatically in about {hours}h {minutes}m."
             )
 
     def job():
         started = time.time()
-        print(f"بدأ الفحص: {len(watchlist)} سهم")
+        print(f"Scan started: {len(watchlist)} {plural(len(watchlist), 'stock')}")
 
         alerts, error = scan_watchlist(config, state)
         state["last_scan"] = datetime.now().strftime("%Y-%m-%d %H:%M")
 
         took = round((time.time() - started) / 60, 1)
-        print(f"خلص الفحص في {took} دقيقة — {len(alerts or [])} تنبيه، خطأ: {error}")
+        print(f"Scan finished in {took} min — {len(alerts or [])} {plural(len(alerts or []), 'alert')}, error: {error}")
 
         if error:
             if is_credit_exhausted(error):
@@ -1301,8 +1306,8 @@ def start_scan(config, state, manual=False):
                         token,
                         ids,
                         f"⏸️ {error}\n\n"
-                        "الفحص التلقائي بيتوقف لين تتجدد الأرصدة غداً، بدل ما يحاول كل "
-                        f"{LTR}{setting(config, 'scan_interval_minutes')} دقيقة ويفشل من فوق الحد.",
+                        "Auto-scanning will pause until credits reset tomorrow, instead of retrying every "
+                        f"{setting(config, 'scan_interval_minutes')} minutes and failing past the limit.",
                     )
                 return
 
@@ -1314,18 +1319,18 @@ def start_scan(config, state, manual=False):
 
         if not alerts:
             if manual:
-                broadcast(token, ids, f"الفحص خلص ({LTR}{took} دقيقة) — ما في سهم حقق الشروط الأربعة.")
+                broadcast(token, ids, f"Scan finished ({took} min) — no stock met all conditions.")
             return
 
         if load_state().get("muted"):
-            print(f"في {len(alerts)} تنبيه بس التنبيهات موقوفة")
+            print(f"{len(alerts)} alerts found but alerts are muted")
             return
 
         for candidate in alerts:
             broadcast(token, ids, format_alert(candidate))
 
     if not run_in_background("scan", job):
-        return "فيه فحص شغّال الحين ⏳\nالفحص ياخذ عدة دقائق — انتظره يخلص ويجيك رده."
+        return "A scan is already running ⏳\nIt takes a few minutes — you will get the result when it finishes."
 
     if not manual:
         return None
@@ -1333,9 +1338,9 @@ def start_scan(config, state, manual=False):
     # الوقت المتوقع: حد Twelve Data المجاني 8 أسهم بالدقيقة، ما نقدر نتجاوزه
     minutes = max(1, round(len(watchlist) / 8))
     return (
-        f"بديت أفحص {LTR}{len(watchlist)} سهم ⏳\n"
-        f"ياخذ حوالي {LTR}{minutes} دقائق — الباقة المجانية تسمح بـ8 أسهم بالدقيقة بس.\n"
-        f"بجيك رد أول ما يخلص، سواء لقيت شي أو لا."
+        f"Scanning {len(watchlist)} {plural(len(watchlist), 'stock')} ⏳\n"
+        f"Takes about {minutes} min — the free plan allows only 8 stocks per minute.\n"
+        f"You will get a reply when it finishes, whether or not anything is found."
     )
 
 
@@ -1351,11 +1356,11 @@ def run_bot(config):
     save_state(state)
 
     menu_ok = publish_command_menu(token)
-    print("قائمة الأوامر:", "انسجلت عند تيليجرام ✅" if menu_ok else "ما انسجلت ⚠️")
+    print("Command menu:", "registered with Telegram ✅" if menu_ok else "not registered ⚠️")
 
     is_open, description = market_state()
-    broadcast(token, allowed_ids, f"البوت اشتغل ✅\nالسوق: {description}\n\nاضغط زر القائمة تشوف الأوامر.")
-    print(f"البوت شغّال. السوق: {description}. يخدم {len(allowed_ids)} محادثة. اضغط Ctrl+C للإيقاف.")
+    broadcast(token, allowed_ids, f"Bot started ✅\nMarket: {description}\n\nTap the menu button to see commands.")
+    print(f"Bot running. Market: {description}. Serving {len(allowed_ids)} chat(s). Press Ctrl+C to stop.")
 
     offset = state.get("update_offset", 0)
     last_auto_scan = 0.0
@@ -1397,26 +1402,26 @@ def run_bot(config):
             # ننبّه المالك برقم محادثته عشان يضيفه بنفسه لو يبي — وما نرد
             # على الغريب نفسه بأي شي يكشف تفاصيل البوت.
             if chat_id not in allowed_ids:
-                name = message.get("chat", {}).get("first_name") or "بدون اسم"
-                print(f"تجاهلت رسالة من محادثة غير مصرّح لها: {chat_id} ({name})")
+                name = message.get("chat", {}).get("first_name") or "no name"
+                print(f"Ignored a message from an unauthorized chat: {chat_id} ({name})")
                 send_message(
                     token,
                     owner_chat_id,
-                    f"👤 شخص جديد راسل البوت ولم أرد عليه.\nالاسم: {LTR}{name}\nرقم المحادثة: {LTR}{chat_id}\n\nلو تبي تضيفه، حط رقمه في telegram_chat_ids داخل config.json وأعد تشغيل البوت.",
+                    f"👤 Someone new messaged the bot and I did not reply.\nName: {name}\nChat ID: {chat_id}\n\nTo add them, put this ID in telegram_chat_ids in config.json and restart the bot.",
                 )
                 continue
 
             reply = handle_command(config, state, text)
             if reply:
-                print(f"أمر من {chat_id}: {text.strip()}")
+                print(f"Command from {chat_id}: {text.strip()}")
                 send_message_chunked(token, chat_id, reply)
 
 
 def require_chat_id(config):
     chat_id = config.get("telegram_chat_id")
     if not chat_id:
-        print("الحقل telegram_chat_id فاضي في config.json")
-        print("شغّل: python bot.py chatid   عشان تعرف الرقم حقك.")
+        print("telegram_chat_id is empty in config.json")
+        print("Run: python bot.py chatid   to find your chat ID.")
         sys.exit(1)
     return chat_id
 
@@ -1451,13 +1456,13 @@ def main():
         try:
             run_bot(config)
         except KeyboardInterrupt:
-            print("\nتم إيقاف البوت.")
+            print("\nBot stopped.")
         return
 
     if len(sys.argv) > 1 and sys.argv[1] == "price":
         if len(sys.argv) < 3:
-            print("لازم تكتب رمز السهم بعد الأمر.")
-            print("مثال: python bot.py price AAPL")
+            print("You must pass a stock symbol after the command.")
+            print("Example: python bot.py price AAPL")
             sys.exit(1)
         send_price(config, sys.argv[2].upper())
         return
@@ -1465,14 +1470,14 @@ def main():
     chat_id = require_chat_id(config)
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    text = f"البوت اشتغل\nالوقت: {LTR}{now}\nالمرحلة: 2 (اختبار الاتصال)"
+    text = f"Bot started\nTime: {now}\nStage: 2 (connection test)"
 
     response = send_message(token, chat_id, text)
 
     if response.get("ok"):
-        print("تم إرسال الرسالة بنجاح. شوف تيليجرام.")
+        print("Message sent. Check Telegram.")
     else:
-        print("فشل الإرسال:")
+        print("Send failed:")
         print(json.dumps(response, ensure_ascii=False, indent=2))
         sys.exit(1)
 
