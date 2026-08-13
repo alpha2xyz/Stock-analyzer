@@ -33,6 +33,7 @@ _TEST_DIR = tempfile.mkdtemp(prefix="stock-analyzer-test-")
 bot.WATCHLIST_PATH = os.path.join(_TEST_DIR, "watchlist.json")
 bot.WATCHLIST_BACKUP_PATH = os.path.join(_TEST_DIR, "watchlist.backup.json")
 bot.STATE_PATH = os.path.join(_TEST_DIR, "state.json")
+bot.PAPER_TRADES_PATH = os.path.join(_TEST_DIR, "paper_trades.json")
 
 # (وقت UTC، فرق نيويورك المتوقع، السوق مفتوح؟، وصف)
 CASES = [
@@ -236,7 +237,7 @@ def main():
     project_dir = os.path.dirname(os.path.abspath(__file__))
     isolated = all(
         not os.path.abspath(path).startswith(project_dir)
-        for path in (bot.WATCHLIST_PATH, bot.WATCHLIST_BACKUP_PATH, bot.STATE_PATH)
+        for path in (bot.WATCHLIST_PATH, bot.WATCHLIST_BACKUP_PATH, bot.STATE_PATH, bot.PAPER_TRADES_PATH)
     )
     failures += not isolated
     print(f"{'نجح ' if isolated else 'فشل '} الاختبارات معزولة عن بيانات البوت الحقيقية")
@@ -654,6 +655,148 @@ def main():
         bot._finnhub_next_slot = saved_slot
 
     print()
+    # ===== دفتر الصفقات الورقية (قرار 2026-08-13) =====
+
+    # فتح صفقة: تنبيه بوقف خسارة صالح يفتح صفقة، بدون وقف خسارة ما يفتح،
+    # وتنبيه ثانٍ على رمز له صفقة مفتوحة أصلاً يُتجاهل
+    journal_calls = []
+
+    def fake_scan_for_journal(config, state=None):
+        return [
+            {"symbol": "AAA", "price": 10.0, "stop_loss": 9.0, "atr": 0.5, "vwap": 9.5, "volume": 1, "average_volume": 1},
+            {"symbol": "BBB", "price": 5.0, "stop_loss": None, "vwap": 4.8, "volume": 1, "average_volume": 1},
+        ], None
+
+    original_scan_j = bot.scan_watchlist
+    original_broadcast_j = bot.broadcast
+    original_run_bg_j = bot.run_in_background
+    bot.scan_watchlist = fake_scan_for_journal
+    bot.broadcast = lambda token, ids, text: journal_calls.append(text)
+    bot.run_in_background = lambda name, target: (target(), True)[1]
+    bot.save_watchlist([{"symbol": "AAA"}, {"symbol": "BBB"}])
+    if os.path.exists(bot.PAPER_TRADES_PATH):
+        os.remove(bot.PAPER_TRADES_PATH)
+
+    try:
+        bot.start_scan({"telegram_bot_token": "x", "telegram_chat_ids": ["1"], "twelvedata_api_key": "x"}, {}, manual=False)
+        trades = bot.load_paper_trades()
+        ok = len(trades) == 1 and trades[0]["symbol"] == "AAA" and trades[0]["status"] == "open"
+        failures += not ok
+        print(f"{'نجح ' if ok else 'فشل '} تنبيه بوقف خسارة صالح يفتح صفقة، وبدون وقف خسارة ما يفتح -> {[t['symbol'] for t in trades]}")
+
+        # نفس السهم يتنبّه مرة ثانية — ما يفتح صفقة مكرّرة
+        bot.start_scan({"telegram_bot_token": "x", "telegram_chat_ids": ["1"], "twelvedata_api_key": "x"}, {}, manual=False)
+        trades = bot.load_paper_trades()
+        ok = len(trades) == 1
+        failures += not ok
+        print(f"{'نجح ' if ok else 'فشل '} تنبيه ثانٍ على رمز له صفقة مفتوحة أصلاً → يُتجاهل، ما تُفتح صفقة ثانية -> {len(trades)}")
+    finally:
+        bot.scan_watchlist = original_scan_j
+        bot.broadcast = original_broadcast_j
+        bot.run_in_background = original_run_bg_j
+        if os.path.exists(bot.WATCHLIST_PATH):
+            os.remove(bot.WATCHLIST_PATH)
+        if os.path.exists(bot.PAPER_TRADES_PATH):
+            os.remove(bot.PAPER_TRADES_PATH)
+
+    # تسوية الصفقات: وقف الخسارة، ونهاية يوم التداول
+    def fake_quote(price):
+        return lambda api_key, endpoint, params, fatal=True: {"c": price}
+
+    original_finnhub_settle = bot.finnhub_request
+
+    def make_open_trade(symbol, entry, stop, opened_at_ny):
+        return {
+            "symbol": symbol, "entry_price": entry, "stop_loss": stop,
+            "opened_at_ny": opened_at_ny.isoformat(), "status": "open",
+            "exit_price": None, "exit_reason": None, "closed_at_ny": None, "pct_return": None,
+        }
+
+    try:
+        opened = datetime(2026, 8, 13, 10, 0)  # نفس يوم الفتح، قبل الإغلاق
+
+        # وقف الخسارة انضرب — يُقفل فوراً بغض النظر عن الوقت
+        bot.save_paper_trades([make_open_trade("SL", 10.0, 9.0, opened)])
+        bot.finnhub_request = fake_quote(8.5)
+        result = bot.settle_paper_trades("k", now_ny=datetime(2026, 8, 13, 11, 0))
+        ok = result[0]["status"] == "closed" and result[0]["exit_reason"] == "stop_loss"
+        failures += not ok
+        print(f"{'نجح ' if ok else 'فشل '} settle_paper_trades: سعر تحت وقف الخسارة → تُقفل فوراً -> {result[0]['status']}/{result[0]['exit_reason']}")
+
+        # نفس اليوم، قبل 16:00، السعر فوق وقف الخسارة — تبقى مفتوحة
+        bot.save_paper_trades([make_open_trade("OPEN", 10.0, 9.0, opened)])
+        bot.finnhub_request = fake_quote(10.5)
+        result = bot.settle_paper_trades("k", now_ny=datetime(2026, 8, 13, 15, 0))
+        ok = result[0]["status"] == "open"
+        failures += not ok
+        print(f"{'نجح ' if ok else 'فشل '} settle_paper_trades: نفس اليوم قبل 16:00، فوق وقف الخسارة → تبقى مفتوحة")
+
+        # نفس اليوم، بعد 16:00 — تُقفل بنهاية يوم التداول
+        bot.save_paper_trades([make_open_trade("EOD", 10.0, 9.0, opened)])
+        bot.finnhub_request = fake_quote(10.5)
+        result = bot.settle_paper_trades("k", now_ny=datetime(2026, 8, 13, 16, 5))
+        ok = result[0]["status"] == "closed" and result[0]["exit_reason"] == "time_exit"
+        failures += not ok
+        print(f"{'نجح ' if ok else 'فشل '} settle_paper_trades: بعد 16:00 نفس يوم الفتح → تُقفل بنهاية اليوم -> {result[0]['exit_reason']}")
+
+        # يوم تقويمي جديد (محاكاة إعادة تشغيل بعد توقف) — تُقفل تلقائياً
+        bot.save_paper_trades([make_open_trade("RESTART", 10.0, 9.0, opened)])
+        bot.finnhub_request = fake_quote(10.5)
+        result = bot.settle_paper_trades("k", now_ny=datetime(2026, 8, 14, 9, 0))
+        ok = result[0]["status"] == "closed" and result[0]["exit_reason"] == "time_exit"
+        failures += not ok
+        print(f"{'نجح ' if ok else 'فشل '} settle_paper_trades: يوم تقويمي جديد بعد توقف → تُقفل تلقائياً")
+
+        # حساب pct_return للربح والخسارة
+        bot.save_paper_trades([make_open_trade("WIN", 10.0, 9.0, opened)])
+        bot.finnhub_request = fake_quote(11.0)
+        result = bot.settle_paper_trades("k", now_ny=datetime(2026, 8, 13, 16, 5))
+        ok = result[0]["pct_return"] == 10.0
+        failures += not ok
+        print(f"{'نجح ' if ok else 'فشل '} pct_return لصفقة رابحة: دخول 10.0 خروج 11.0 -> {result[0]['pct_return']} (متوقع 10.0)")
+
+        bot.save_paper_trades([make_open_trade("LOSE", 10.0, 9.0, opened)])
+        bot.finnhub_request = fake_quote(9.0)
+        result = bot.settle_paper_trades("k", now_ny=datetime(2026, 8, 13, 11, 0))
+        ok = result[0]["pct_return"] == -10.0
+        failures += not ok
+        print(f"{'نجح ' if ok else 'فشل '} pct_return لصفقة خاسرة: دخول 10.0 خروج 9.0 -> {result[0]['pct_return']} (متوقع -10.0)")
+    finally:
+        bot.finnhub_request = original_finnhub_settle
+        if os.path.exists(bot.PAPER_TRADES_PATH):
+            os.remove(bot.PAPER_TRADES_PATH)
+
+    # الإحصائيات: نسبة النجاح والمتوسط على دفتر مقفل بمزيج ربح/خسارة
+    mixed = [
+        dict(make_open_trade("A", 10.0, 9.0, opened), status="closed", pct_return=10.0),
+        dict(make_open_trade("B", 10.0, 9.0, opened), status="closed", pct_return=-5.0),
+        dict(make_open_trade("C", 10.0, 9.0, opened), status="closed", pct_return=20.0),
+        dict(make_open_trade("D", 10.0, 9.0, opened), status="open"),  # ما يُحتسب — لسه مفتوحة
+    ]
+    stats = bot.paper_trade_stats(mixed)
+    ok = stats["count"] == 3 and stats["win_rate"] == round(2 / 3 * 100, 1) and stats["avg_return"] == round((10 - 5 + 20) / 3, 2)
+    failures += not ok
+    print(f"{'نجح ' if ok else 'فشل '} إحصائية الدفتر: 2 ربح من 3 مقفلة، رابعة مفتوحة ما تُحتسب -> {stats}")
+
+    # /journal بدفتر فاضي — رسالة واضحة، ما ينهار
+    if os.path.exists(bot.PAPER_TRADES_PATH):
+        os.remove(bot.PAPER_TRADES_PATH)
+    empty_journal = bot.cmd_journal({})
+    ok = "empty" in empty_journal.lower()
+    failures += not ok
+    print(f"{'نجح ' if ok else 'فشل '} /journal بدفتر فاضي: رسالة واضحة بدون انهيار -> {empty_journal!r}")
+
+    # حفظ/تحميل paper_trades.json يطابق (نفس نمط اختبار watchlist.json)
+    sample = [make_open_trade("PERSIST", 10.0, 9.0, opened)]
+    bot.save_paper_trades(sample)
+    reloaded = bot.load_paper_trades()
+    ok = reloaded == sample
+    failures += not ok
+    print(f"{'نجح ' if ok else 'فشل '} حفظ/تحميل paper_trades.json يطابق النتيجة الأصلية")
+    if os.path.exists(bot.PAPER_TRADES_PATH):
+        os.remove(bot.PAPER_TRADES_PATH)
+
+    print()
     # حادثة 2026-08-12: /list كان يقصّ القائمة عند 40 سهم ويكتب "و X غيرهم"
     # بدل ما يعرض الباقي فعلياً — خفى بيانات بصمت. الحل: chunk_message()
     # تقسّم أي رسالة طويلة لعدة رسائل تيليجرام، ما تخفي شي.
@@ -850,6 +993,7 @@ def main():
         + 2 + 1                            # عدّاد الأرصدة وتصفيره، وسقف الميزانية
         + 1                                # منظّم معدّل Finnhub
         + len(ST_CASES) + 4 + 1            # الشرط الرابع الموسّع وحد السعر
+        + 2 + 4 + 2 + 1 + 1 + 1            # دفتر الصفقات الورقية (فتح/تكرار، تسوية×4، pct×2، إحصائية، journal فاضي، حفظ/تحميل)
     )
     if failures:
         print(f"❌ فشل {failures} اختبار")

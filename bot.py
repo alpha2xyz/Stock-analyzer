@@ -50,6 +50,7 @@ CONFIG_PATH = os.path.join(HERE, "config.json")
 STATE_PATH = os.path.join(HERE, "state.json")
 WATCHLIST_PATH = os.path.join(HERE, "watchlist.json")
 WATCHLIST_BACKUP_PATH = os.path.join(HERE, "watchlist.backup.json")
+PAPER_TRADES_PATH = os.path.join(HERE, "paper_trades.json")
 TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
 FINNHUB_API = "https://finnhub.io/api/v1/{endpoint}"
 TWELVEDATA_API = "https://api.twelvedata.com/{endpoint}"
@@ -333,6 +334,7 @@ COMMANDS = [
     ("restore", "Restore the watchlist from before the last /refresh"),
     ("mute", "Pause alerts"),
     ("unmute", "Resume alerts"),
+    ("journal", "Paper trading results — open positions and win rate"),
     ("help", "Show commands"),
 ]
 
@@ -429,6 +431,177 @@ def load_watchlist_backup():
             return json.load(f)
     except (json.JSONDecodeError, OSError):
         return None
+
+
+# ---------------------------------------------------------------
+# دفتر الصفقات الورقية (paper trading journal) — قرار 2026-08-13
+#
+# قياس دقة التنبيهات قبل الثقة فيها للتداول الحقيقي، بدل الاشتراك بمصادر
+# مدفوعة (Ortex/Fintel/Polygon) لبيانات شورت/CTB ما لها بديل مجاني كافي.
+# كل صفقة تُسوّى بـ Finnhub quote المجاني بس — صفر تكلفة على أرصدة
+# Twelve Data.
+# ---------------------------------------------------------------
+
+def load_paper_trades():
+    if not os.path.exists(PAPER_TRADES_PATH):
+        return []
+    try:
+        with open(PAPER_TRADES_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+def save_paper_trades(trades):
+    with open(PAPER_TRADES_PATH, "w", encoding="utf-8") as f:
+        json.dump(trades, f, ensure_ascii=False, indent=2)
+
+
+def open_paper_trade(symbol, entry_price, stop_loss):
+    """يفتح صفقة ورقية لتنبيه جديد. يتجاهل لو فيه صفقة مفتوحة على نفس
+    الرمز أصلاً (يمنع ازدواج الإحصائيات)."""
+    trades = load_paper_trades()
+    if any(t["symbol"] == symbol and t["status"] == "open" for t in trades):
+        return
+
+    trades.append(
+        {
+            "symbol": symbol,
+            "entry_price": entry_price,
+            "stop_loss": stop_loss,
+            "opened_at_ny": new_york_now().isoformat(),
+            "status": "open",
+            "exit_price": None,
+            "exit_reason": None,
+            "closed_at_ny": None,
+            "pct_return": None,
+        }
+    )
+    save_paper_trades(trades)
+
+
+def settle_paper_trades(api_key, now_ny=None):
+    """يفحص كل صفقة مفتوحة ويقفلها لو ضربت وقف الخسارة أو انتهى يوم
+    التداول اللي فُتحت فيه.
+
+    مدة الصفقة يوم تداول واحد (قراره 2026-08-13): تُقفل عند إغلاق السوق
+    (16:00 نيويورك) لنفس يوم الفتح، أو فوراً لو صار يوم تقويمي جديد —
+    هذا الشرط الثاني يغطي حالة إعادة تشغيل البوت بعد توقف تلقائياً، بدون
+    أي منطق إضافي.
+    """
+    now_ny = now_ny or new_york_now()
+    trades = load_paper_trades()
+    changed = False
+
+    for trade in trades:
+        if trade["status"] != "open":
+            continue
+
+        opened_ny = datetime.fromisoformat(trade["opened_at_ny"])
+        same_day = now_ny.date() == opened_ny.date()
+        market_closed_today = now_ny.hour * 60 + now_ny.minute >= 16 * 60
+        time_to_exit = (not same_day) or (same_day and market_closed_today)
+
+        quote = finnhub_request(api_key, "quote", {"symbol": trade["symbol"]}, fatal=False)
+        price = quote.get("c") if isinstance(quote, dict) else None
+        if not price:
+            continue  # ما قدرنا نجيب سعر — نجرب الدورة الجاية، ما نقفل بلا سعر
+
+        exit_reason = None
+        if price <= trade["stop_loss"]:
+            exit_reason = "stop_loss"
+        elif time_to_exit:
+            exit_reason = "time_exit"
+
+        if exit_reason:
+            trade["status"] = "closed"
+            trade["exit_price"] = price
+            trade["exit_reason"] = exit_reason
+            trade["closed_at_ny"] = now_ny.isoformat()
+            trade["pct_return"] = round((price - trade["entry_price"]) / trade["entry_price"] * 100, 2)
+            changed = True
+
+    if changed:
+        save_paper_trades(trades)
+
+    return trades
+
+
+def paper_trade_stats(trades):
+    """ملخص الصفقات المقفلة: العدد، نسبة النجاح، متوسط العائد."""
+    closed = [t for t in trades if t["status"] == "closed"]
+    if not closed:
+        return {"count": 0, "win_rate": None, "avg_return": None}
+
+    wins = sum(1 for t in closed if t["pct_return"] > 0)
+    return {
+        "count": len(closed),
+        "win_rate": round(wins / len(closed) * 100, 1),
+        "avg_return": round(sum(t["pct_return"] for t in closed) / len(closed), 2),
+    }
+
+
+def cmd_journal(config):
+    api_key = config.get("finnhub_api_key")
+    trades = load_paper_trades()
+    if not trades:
+        return "Journal is empty — no alert has opened a paper trade yet."
+
+    open_trades = [t for t in trades if t["status"] == "open"]
+    closed = [t for t in trades if t["status"] == "closed"]
+
+    lines = ["📔 Paper Trading Journal", ""]
+
+    if open_trades:
+        lines.append(f"Open ({len(open_trades)}):")
+        for t in open_trades:
+            quote = finnhub_request(api_key, "quote", {"symbol": t["symbol"]}, fatal=False) if api_key else None
+            price = quote.get("c") if isinstance(quote, dict) else None
+            if price:
+                unrealized = round((price - t["entry_price"]) / t["entry_price"] * 100, 2)
+                lines.append(f"  {t['symbol']} — entry {t['entry_price']}, now {price} ({unrealized:+}%)")
+            else:
+                lines.append(f"  {t['symbol']} — entry {t['entry_price']}")
+        lines.append("")
+
+    stats = paper_trade_stats(trades)
+    if stats["count"]:
+        lines += [
+            f"Closed ({stats['count']}):",
+            f"  Win rate: {stats['win_rate']}%",
+            f"  Average return: {stats['avg_return']:+}%",
+        ]
+    else:
+        lines.append("No closed trades yet.")
+
+    return "\n".join(lines)
+
+
+def daily_journal_summary(trades, now_ny):
+    """ملخص اليوم عند إغلاق السوق: كم صفقة فُتحت وقُفلت اليوم، ونسبة نجاح
+    اليوم، مع الإحصائية الكلية للدفتر بالكامل."""
+    today = now_ny.date()
+    today_closed = [
+        t for t in trades
+        if t["status"] == "closed" and datetime.fromisoformat(t["closed_at_ny"]).date() == today
+    ]
+
+    lines = ["📔 Daily Journal Summary", ""]
+    if not today_closed:
+        lines.append("No paper trades closed today.")
+    else:
+        wins = sum(1 for t in today_closed if t["pct_return"] > 0)
+        stopped = sum(1 for t in today_closed if t["exit_reason"] == "stop_loss")
+        lines += [
+            f"Closed today: {len(today_closed)} ({stopped} by stop loss, {len(today_closed) - stopped} at day-end)",
+            f"Today's win rate: {round(wins / len(today_closed) * 100, 1)}%",
+        ]
+
+    overall = paper_trade_stats(trades)
+    if overall["count"]:
+        lines += ["", f"All-time: {overall['count']} closed, {overall['win_rate']}% win rate, {overall['avg_return']:+}% avg return"]
+
+    return "\n".join(lines)
 
 
 def us_common_stocks(api_key, config=None):
@@ -1184,6 +1357,8 @@ def handle_command(config, state, text):
         return cmd_restore()
     if command == "/scan":
         return start_scan(config, state, manual=True)
+    if command == "/journal":
+        return cmd_journal(config)
 
     return f"Unknown command {command}\nSend /help to see available commands."
 
@@ -1280,6 +1455,12 @@ def start_scan(config, state, manual=False):
         started = time.time()
         print(f"Scan started: {len(watchlist)} {plural(len(watchlist), 'stock')}")
 
+        # يسوّي أي صفقة ورقية مفتوحة قبل الفحص — مجاني (Finnhub quote بس)،
+        # ما يعتمد على نتيجة scan_watchlist()
+        api_key = config.get("finnhub_api_key")
+        if api_key:
+            settle_paper_trades(api_key)
+
         alerts, error = scan_watchlist(config, state)
         state["last_scan"] = datetime.now().strftime("%Y-%m-%d %H:%M")
 
@@ -1328,6 +1509,8 @@ def start_scan(config, state, manual=False):
 
         for candidate in alerts:
             broadcast(token, ids, format_alert(candidate))
+            if candidate.get("stop_loss") is not None:
+                open_paper_trade(candidate["symbol"], candidate["price"], candidate["stop_loss"])
 
     if not run_in_background("scan", job):
         return "A scan is already running ⏳\nIt takes a few minutes — you will get the result when it finishes."
@@ -1364,6 +1547,7 @@ def run_bot(config):
 
     offset = state.get("update_offset", 0)
     last_auto_scan = 0.0
+    was_open = is_open  # لرصد لحظة إغلاق السوق — تسوية آخر صفقات اليوم والملخص اليومي
 
     while True:
         # الفحص التلقائي: وقت السوق بس، وكل فترة محددة.
@@ -1373,6 +1557,15 @@ def run_bot(config):
         if is_open and time.time() - last_auto_scan >= interval_seconds and load_watchlist():
             last_auto_scan = time.time()
             start_scan(config, state, manual=False)
+
+        # السوق أغلق للتو — تسوية آخر صفقات اليوم (يوم التداول انتهى) وبث
+        # الملخص اليومي. يشتغل مرة وحدة عند الانتقال، مو كل دورة.
+        if was_open and not is_open:
+            api_key = config.get("finnhub_api_key")
+            if api_key:
+                trades = settle_paper_trades(api_key)
+                broadcast(token, allowed_ids, daily_journal_summary(trades, new_york_now()))
+        was_open = is_open
 
         result = telegram_request(
             token, "getUpdates", {"offset": offset, "timeout": 30}, fatal=False

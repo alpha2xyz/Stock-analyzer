@@ -5,4 +5,5 @@ __pycache__/
 *.pyc
 watchlist.json
 watchlist.backup.json
+paper_trades.json
 .DS_Store
