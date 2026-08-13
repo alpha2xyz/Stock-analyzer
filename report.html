@@ -340,6 +340,36 @@
   }
   .cmd span { font-size: .85rem; color: var(--text-faint); }
 
+  /* ---------- message example ---------- */
+
+  .msg-example {
+    background: var(--surface);
+    border: 1px solid var(--line-soft);
+    border-radius: .7rem;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+  .msg-example-label {
+    font-size: .72rem;
+    color: var(--text-faint);
+    letter-spacing: .04em;
+    padding: .7rem 1.1rem .55rem;
+    border-bottom: 1px solid var(--line-soft);
+    background: var(--surface-sunk);
+  }
+  .msg-example-body {
+    margin: 0;
+    padding: 1rem 1.2rem;
+    font-family: var(--mono);
+    font-size: .87rem;
+    line-height: 1.65;
+    color: var(--text);
+    white-space: pre-wrap;
+    overflow-x: auto;
+    direction: ltr;
+    text-align: left;
+  }
+
   footer {
     border-top: 1px solid var(--line);
     padding-top: 1.1rem;
@@ -377,12 +407,12 @@
   <section>
     <h2>وش يسوي البوت بالضبط</h2>
     <p>
-      البوت يراقب <strong>كل الأسهم الأمريكية العادية</strong> (حوالي
-      ١٨٬٤٠٠ سهم) بحثاً عن فرصة نادرة: شركة صغيرة الحجم، تداولها اليوم أعلى
-      من المعتاد بوضوح، وسعرها قوي هذا اليوم بالذات. لما يلقى سهم يحقق أربعة
-      شروط محددة <strong>مع بعض</strong>، يرسل لك <strong>تنبيه فوري على
-      تيليجرام</strong> فيه سعر دخول مقترح، ووقف خسارة محسوب، ورابط شارت
-      TradingView جاهز.
+      البوت يراقب <strong>الأسهم العادية على البورصات الأمريكية الحقيقية</strong>
+      (~٤٬٩٥٠ سهم بعد استبعاد أسهم OTC) بحثاً عن فرصة نادرة: شركة صغيرة
+      الحجم، تداولها اليوم أعلى من المعتاد بوضوح، وزخمها الفني قوي هذي
+      اللحظة بالذات. لما يلقى سهم يحقق أربعة شروط محددة <strong>مع بعض</strong>،
+      يرسل لك <strong>تنبيه فوري على تيليجرام</strong> فيه سعر دخول مقترح،
+      ووقف خسارة محسوب، ورابط شارت TradingView جاهز — بالضبط زي المثال تحت.
     </p>
     <p>
       البوت <strong>يراقب وينبّه بس — ما يشتري ولا يبيع</strong>. القرار
@@ -390,14 +420,28 @@
     </p>
   </section>
 
-  <div class="tape">
-    <div class="tape-label">آخر اختبار فعلي على الجوال — أمر <span class="mono">python bot.py price AAPL</span></div>
-    <div class="tape-item"><span class="tape-key">AAPL</span><span class="tape-val">305.71</span></div>
-    <div class="tape-item"><span class="tape-key">التغيّر</span><span class="tape-val down">−7.62</span></div>
-    <div class="tape-item"><span class="tape-key">النسبة</span><span class="tape-val down">−2.43%</span></div>
-    <div class="tape-item"><span class="tape-key">أعلى</span><span class="tape-val">310.01</span></div>
-    <div class="tape-item"><span class="tape-key">أقل</span><span class="tape-val">304.61</span></div>
-    <div class="tape-item"><span class="tape-key">الرسالة</span><span class="tape-val">وصلت ✓</span></div>
+  <div class="msg-example">
+    <div class="msg-example-label">مثال على المخرج المطلوب — شكل التنبيه اللي يوصلك فعلياً على تيليجرام لما سهم يحقق الشروط الأربعة</div>
+    <pre class="msg-example-body">🚨 ALERT — CRVO
+
+Entry: 6.84
+Stop Loss: 6.25
+(ATR 0.34)
+
+Volume: 1,180,000 shares
+Average: 385,930 shares
+Spike: 3.1x average
+Change today: 11.2%
+
+✅ Conditions met:
+Above VWAP: 6.51
+Above EMA5: 6.72
+Above EMA10: 6.63
+Above EMA20: 6.48
+MACD histogram positive: 0.0412
+SuperTrend bullish cross: 6.39
+
+Chart: https://www.tradingview.com/symbols/CRVO/</pre>
   </div>
 
   <section>
@@ -936,60 +980,92 @@
       </p>
     </div>
 
-    <h3>كل شرط ومصدره</h3>
+    <h3>كل بوابة وشرط ومصدره</h3>
     <div class="table-wrap">
       <table>
         <thead>
-          <tr><th>المطلوب</th><th>Finnhub</th><th>Twelve&nbsp;Data</th><th>المصدر المعتمد</th></tr>
+          <tr><th>البوابة/الشرط</th><th>المصدر</th><th>المرحلة</th><th>التكلفة</th></tr>
         </thead>
         <tbody>
           <tr>
-            <td>١ &mdash; القيمة السوقية ٤٠–٦٠ مليون</td>
-            <td class="verdict verdict--ok">✓</td>
-            <td class="verdict verdict--stop">✕</td>
-            <td>Finnhub</td>
+            <td>البورصة (لا OTC)</td>
+            <td>Finnhub <code>stock/symbol</code></td>
+            <td>أ — بناء القائمة</td>
+            <td class="verdict verdict--ok">مجانية</td>
           </tr>
           <tr>
-            <td>٢ &mdash; الفلوت فوق ٥٠٠٬٠٠٠</td>
-            <td class="verdict verdict--ok">✓</td>
-            <td class="verdict verdict--stop">✕</td>
-            <td>Finnhub</td>
+            <td>١ — القيمة السوقية ٥٠٠ ألف – ٦٠ مليون</td>
+            <td>Finnhub <code>profile2</code></td>
+            <td>أ</td>
+            <td class="verdict verdict--ok">مجانية</td>
           </tr>
           <tr>
-            <td>٣ &mdash; قفزة في حجم التداول</td>
-            <td class="verdict verdict--stop">✕</td>
-            <td class="verdict verdict--ok">✓</td>
+            <td>٢ — الفلوت ٥٠٠ ألف – ١٥ مليون</td>
+            <td>Finnhub <code>profile2</code></td>
+            <td>أ</td>
+            <td class="verdict verdict--ok">مجانية</td>
+          </tr>
+          <tr>
+            <td>السيولة ≥ ٥٠ ألف/يوم</td>
+            <td>Finnhub <code>stock/metric</code></td>
+            <td>أ</td>
+            <td class="verdict verdict--ok">مجانية</td>
+          </tr>
+          <tr>
+            <td>السعر ≥ $١ ونسبة التغير ≥ ٥٪</td>
+            <td>Finnhub <code>quote</code></td>
+            <td>ب — الغربلة السريعة</td>
+            <td class="verdict verdict--ok">مجانية</td>
+          </tr>
+          <tr>
+            <td>٣ — قفزة حجم التداول</td>
+            <td>Twelve Data <code>quote</code></td>
+            <td>ج — التأكيد</td>
+            <td class="verdict verdict--warn">١ رصيد</td>
+          </tr>
+          <tr>
+            <td>٤ — VWAP + EMA×٣ + MACD + SuperTrend</td>
             <td>Twelve Data</td>
-          </tr>
-          <tr>
-            <td>٤ &mdash; السعر فوق VWAP</td>
-            <td class="verdict verdict--stop">✕</td>
-            <td class="verdict verdict--ok">✓</td>
-            <td>Twelve Data</td>
+            <td>ج</td>
+            <td class="verdict verdict--warn">حتى ٧ أرصدة</td>
           </tr>
           <tr>
             <td>وقف الخسارة بـ ATR</td>
-            <td class="verdict verdict--stop">✕</td>
-            <td class="verdict verdict--ok">✓</td>
-            <td>Twelve Data</td>
+            <td>Twelve Data <code>atr</code></td>
+            <td>ج</td>
+            <td class="verdict verdict--warn">١ رصيد</td>
           </tr>
         </tbody>
       </table>
     </div>
+    <p>
+      <strong>أقصى تكلفة لتنبيه واحد كامل: ٩ أرصدة</strong> (١ + ٧ + ١) —
+      وهذا نادر، لأن أغلب المرشحين يسقطون بدري (رصيد أو ثلاثة بس) قبل ما
+      يوصلوا آخر بوابة. كل البوابات قبل المرحلة (ج) مجانية بالكامل.
+    </p>
     <div class="flow">
       <div class="node">
-        <div class="node-role">BUILD THE LIST</div>
+        <div class="node-role">STAGE A — BUILD</div>
         <div class="node-name">Finnhub &mdash; ٦٠/دقيقة</div>
         <div class="node-desc">
-          يبني القائمة بالقيمة السوقية والفلوت. مرة في اليوم تكفي — هذي
-          بيانات ما تتغير كل ساعة.
+          البورصة، القيمة السوقية، الفلوت، السيولة. مرة في اليوم تكفي —
+          هذي بيانات ما تتغير كل ساعة.
         </div>
       </div>
       <div class="node">
-        <div class="node-role">SCAN THE LIST</div>
+        <div class="node-role">STAGE B — SCREEN</div>
+        <div class="node-name">Finnhub &mdash; مجانية</div>
+        <div class="node-desc">
+          نسبة التغير اليومي، كل ١٥ دقيقة وقت السوق. اللي ما تحرّك ٥٪ ما
+          يوصل Twelve Data إطلاقاً.
+        </div>
+      </div>
+      <div class="node">
+        <div class="node-role">STAGE C — CONFIRM</div>
         <div class="node-name">Twelve Data &mdash; ٨/دقيقة</div>
         <div class="node-desc">
-          يفحص الناجين: الحجم و VWAP، و ATR وقت التنبيه. رصيدين لكل سهم.
+          للمتحركين بس: الحجم، حزمة الشرط الرابع، ATR. هنا وحده تُصرف
+          الأرصدة.
         </div>
       </div>
     </div>
@@ -1031,7 +1107,9 @@
         رد Finnhub نفسه (٠٫٧-٠٫٨ ثانية)، فينتج فعلياً ~٣٣-٤٠ طلب/دقيقة بس
         رغم إن الحد ٦٠. حساب الانتظار من بداية الطلب السابق (مو من نهايته)
         قرّب مدة فحص السوق الكامل من ~٧٫٦ ساعة إلى ~٥٫٦ ساعة — نفس الحد،
-        نفس عدد الطلبات بالضبط، بس حساب توقيت أدق.
+        نفس عدد الطلبات بالضبط، بس حساب توقيت أدق. (هذا الرقم على السوق
+        غير المفلتر، ١٨٬٤٠٠ سهم، قبل ما يُضاف فلتر البورصة — الرقم الحالي
+        ~١٫٥ ساعة على ٤٬٩٥٠ سهم، تفصيله تحت.)
       </p>
     </div>
     <p>
@@ -1059,76 +1137,76 @@
   <section>
     <h2>الميزانية اليومية — كم سهم نقدر نغطي</h2>
     <p>
-      في <strong>ميزانيتين منفصلتين</strong>، وكل وحدة تجاوب على سؤال مختلف.
-      وحدة منهم فقط هي القيد الحقيقي.
+      نفس المنطق من قبل — <strong>ميزانيتين منفصلتين</strong> — لكن الأرقام
+      تغيّرت جذرياً بعد فلتر البورصة والغربلة المجانية (المرحلة ب).
     </p>
 
-    <h3>أ &mdash; بناء القائمة عند Finnhub: مو مشكلة</h3>
+    <h3>أ &mdash; بناء القائمة عند Finnhub: مقاس فعلياً</h3>
     <p>
-      طلب واحد يكفي لكل سهم، لأن <code>profile2</code> يرجّع القيمة السوقية
-      والفلوت مع بعض. والحد ٦٠ طلب/دقيقة = <strong>٣٬٦٠٠ سهم في الساعة</strong>.
+      فلتر البورصة (لا OTC) ينزّل السوق من ١٨٬٤٠٠ سهم إلى <strong>~٤٬٩٥٠</strong>
+      قبل أي فحص. حد Finnhub ٦٠ طلب/دقيقة، وطلب واحد يكفي لكل سهم في مرحلة
+      القيمة السوقية والفلوت.
     </p>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>كم سهم نمسح</th><th>الوقت المطلوب</th></tr></thead>
-        <tbody>
-          <tr><td>١٠٠ سهم</td><td class="verdict verdict--ok">أقل من دقيقتين</td></tr>
-          <tr><td>١٬٠٠٠ سهم</td><td class="verdict verdict--ok">١٧ دقيقة</td></tr>
-          <tr><td>كل السوق الأمريكي (١٨٬٤٠٠ سهم فعلياً) — لو ما توقف بدري</td><td class="verdict verdict--warn">~٥٫٦ ساعة</td></tr>
-        </tbody>
-      </table>
-    </div>
     <div class="callout">
-      <h3>٥٫٦ ساعة سقف أسوأ حالة، مو الوقت المتوقع فعلياً</h3>
+      <h3>نتيجة حقيقية: ~١٫٥ ساعة، ٣٢ سهم مطابق من ٤٬٩٥٠</h3>
       <p>
-        <span class="mono">/refresh</span> <strong>يتوقف تلقائياً فور ما
-        يوصل ٣٠ سهم مطابق</strong> — ما يكمل بقية السوق. الـ٥٫٦ ساعة هي
-        الوقت لو فحص السوق كله بدون ما يلقى ٣٠ سهم، وهذا مستبعد جداً حسب
-        بيانات حقيقية: فحصتين سابقتين لقتا ٢٥ سهم مطابق من أول ١٬٥٠٠ فُحصوا،
-        و٣٣٥ سهم من فحص جزئي ثاني — يعني احتمال كبير إن ٣٠ سهم يتحققون
-        بسرعة وينتهي الفحص خلال <strong>٣٠-٤٥ دقيقة تقريباً</strong>، مو
-        ساعات. رقم غير مضمون لأنه يعتمد على بيانات السوق الحية وقت التشغيل.
+        <span class="mono">/refresh</span> شغّل فعلياً بعد الفلاتر الجديدة
+        وفحص السوق المفلتر كامل (٣٢ سهم مطابق أقل بكثير من الحد الأقصى ٣٠٠،
+        فما توقف بدري — كمّل السوق كله). المدة الفعلية <strong>~١٫٥
+        ساعة</strong>، مقارنة بـ٥٫٦ ساعة قبل فلتر البورصة لنفس السوق غير
+        المفلتر.
       </p>
     </div>
     <p>
-      <strong>وقت الفحص الكامل (٥٫٦ ساعة) مقاس فعلياً بتاريخ ٢٠٢٦-٠٨-١١</strong>،
-      مو تقدير نظري — كان موثّق خطأ كـ"ساعة ونص" قبل القياس. هذا يشتغل
-      <strong>مرة في اليوم بس</strong> — القيمة السوقية والفلوت ما يتغيرون
-      كل ساعة.
+      يشتغل <strong>مرة في الأسبوع تقريباً تكفي</strong> — القيمة السوقية
+      والفلوت والسيولة بيانات ما تتغير كل يوم.
     </p>
 
-    <h3>ب &mdash; الفحص المتكرر عند Twelve Data: هذا هو القيد</h3>
+    <h3>ب &mdash; الفحص المتكرر عند Twelve Data: القيد الحقيقي الوحيد</h3>
     <p>
-      ٨٠٠ رصيد في اليوم، وكل سهم في كل فحصة يكلف رصيد. ساعات السوق ٦٫٥ ساعة
-      (٤:٣٠ عصراً &mdash; ١١:٠٠ ليلاً بتوقيت السعودية).
+      ٧٥٠ رصيد متاح باليوم (هامش أمان تحت حد ٨٠٠ الفعلي)، وساعات السوق ٦٫٥
+      ساعة. <strong>لكن حجم القائمة ما عاد يحدد الاستهلاك</strong> — الغربلة
+      المجانية (المرحلة ب) تفصل بينهم:
     </p>
     <div class="table-wrap">
       <table>
-        <thead>
-          <tr><th>حجم القائمة</th><th>فحصات في اليوم</th><th>يعني فحص كل</th></tr>
-        </thead>
+        <thead><tr><th>وش يستهلك رصيد</th><th>التكلفة</th></tr></thead>
         <tbody>
-          <tr><td>١٠ أسهم</td><td>~٧٠</td><td class="verdict verdict--ok">٥ دقائق</td></tr>
-          <tr><td>٢٠ سهم</td><td>~٣٦</td><td class="verdict verdict--ok">١١ دقيقة</td></tr>
-          <tr><td>٣٠ سهم (المُعتمد)</td><td>~٢٦</td><td class="verdict verdict--ok">١٥ دقيقة</td></tr>
-          <tr><td>٥٠ سهم</td><td>~١٤</td><td class="verdict verdict--warn">٢٨ دقيقة</td></tr>
-          <tr><td>١٠٠ سهم</td><td>~٧</td><td class="verdict verdict--stop">٥٦ دقيقة</td></tr>
+          <tr>
+            <td>سهم في القائمة ما تحرّك ≥ ٥٪ اليوم</td>
+            <td class="verdict verdict--ok">صفر — يسقط عند Finnhub مجاناً</td>
+          </tr>
+          <tr>
+            <td>سهم تحرّك لكن سقط عند قفزة الحجم (شرط ٣)</td>
+            <td class="verdict verdict--warn">١ رصيد</td>
+          </tr>
+          <tr>
+            <td>عدّى قفزة الحجم لكن سقط عند VWAP (أول فحص من الشرط الرابع)</td>
+            <td class="verdict verdict--warn">٢ رصيد</td>
+          </tr>
+          <tr>
+            <td>عدّى VWAP لكن سقط عند MACD (ثاني فحص)</td>
+            <td class="verdict verdict--warn">٣ أرصدة</td>
+          </tr>
+          <tr>
+            <td>سهم وصل لتنبيه كامل (كل الشروط + وقف الخسارة)</td>
+            <td class="verdict verdict--stop">حتى ٩ أرصدة</td>
+          </tr>
         </tbody>
       </table>
     </div>
+    <p>
+      عملياً، <strong>يوم فيه ١٠-١٥ سهم متحرك ≥ ٥٪</strong> (طبيعي لسوق عادي)
+      يستهلك جزء صغير من الـ٧٥٠ — لأن أغلبهم يسقطون بدري ببضعة أرصدة، مو ٩.
+      حجم القائمة نفسه صار حتى ٣٠٠ سهم (كان محدود بـ٣٠ قبل الغربلة المجانية)
+      بدون ما يقرّب الميزانية اليومية.
+    </p>
     <div class="callout">
-      <h3>الجدول أعلاه صار تاريخياً — الغربلة المجانية غيّرت المعادلة</h3>
+      <h3>حمايتان تمنعان تكرار حادثة نفاد الأرصدة (٢٠٢٦-٠٨-١١)</h3>
       <p>
-        الأرقام فوق تفترض إن <strong>كل</strong> سهم في القائمة يروح لـ Twelve
-        Data كل فحصة. بعد إضافة المرحلة (ب)، اللي يوصل Twelve Data هو
-        <strong>المتحركون ≥ ٥٪ بس</strong> — وهؤلاء قلة في أي يوم عادي.
-        فحجم القائمة ما عاد هو القيد، ورُفع الحد من ٣٠ إلى ٣٠٠ سهم.
-      </p>
-      <p>
-        <strong>حمايتان تمنعان تكرار حادثة نفاد الأرصدة:</strong> سقف يومي
-        صريح (٧٥٠ رصيد — الفحص يوقف <em>قبل</em> التجاوز مو بعده)، وفترة
-        تهدئة ٦٠ دقيقة لكل رمز عشان سهم طالع طول اليوم ما يستهلك رصيد كل
-        فحصة.
+        <strong>سقف يومي صريح</strong> (٧٥٠ رصيد) — الفحص يوقف <em>قبل</em>
+        التجاوز مو بعده. <strong>تهدئة ٦٠ دقيقة لكل رمز</strong> — سهم طالع
+        طول اليوم ما يستهلك رصيد كل فحصة (كل ١٥ دقيقة)، بس مرة كل ساعة.
       </p>
     </div>
   </section>
@@ -1157,7 +1235,7 @@
           </tr>
           <tr>
             <td>أرصدة Twelve Data اليومية (٨٠٠) نفدت، والفحص التلقائي استمر يحاول كل ١٥ دقيقة ويفشل — يصرف أرصدة سلبية بدون فايدة لين قفل السوق</td>
-            <td>يكتشف رسالة النفاد تحديداً (بمرحلتي quote و vwap)، يوقف الفحص لين تجدد الأرصدة، وينبّه مرة وحدة بس &mdash; <strong>٢٠٢٦-٠٨-١٢</strong>. حجم القائمة تحدد عند ٣٠ عشان سبب النفاد نفسه ما يتكرر</td>
+            <td>يكتشف رسالة النفاد تحديداً، يوقف الفحص لين تجدد الأرصدة، وينبّه مرة وحدة بس &mdash; <strong>٢٠٢٦-٠٨-١٢</strong>. الحل الجذري جاء بعدها: الغربلة المجانية (المرحلة ب) + سقف يومي صريح + تهدئة لكل رمز، عشان سبب النفاد نفسه ما يتكرر بغض النظر عن حجم القائمة</td>
           </tr>
         </tbody>
       </table>
